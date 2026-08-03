@@ -40,14 +40,13 @@
   .cardk.wide .v { color: #ffd84d; }
 
   .nextbox {
-    width: 82px; background: rgba(255,255,255,0.045);
+    width: 64px; background: rgba(255,255,255,0.045);
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 10px; padding: 6px; display: flex; flex-direction: column; gap: 3px;
   }
   .nextbox .k { font-size: 9px; letter-spacing: .14em; color: rgba(255,255,255,0.4); text-align: center; }
-  .nextrow { display: flex; gap: 3px; flex: 1; align-items: center; }
-  .nextrow canvas { flex: 1; height: 26px; display: block; }
-  .nextrow canvas:first-child { flex: 1.5; height: 34px; }
+  .nextrow { display: flex; flex: 1; align-items: center; overflow: hidden; }
+  .nextrow canvas { width: 100% !important; height: 42px; display: block; }
 
   /* ---------- 舞台 ---------- */
   #stage { flex: 1; position: relative; min-height: 0; }
@@ -112,7 +111,7 @@
     <div class="nextbox">
       <div class="k">NEXT</div>
       <div class="nextrow">
-        <canvas id="n0"></canvas><canvas id="n1"></canvas><canvas id="n2"></canvas>
+        <canvas id="n0"></canvas>
       </div>
     </div>
   </div>
@@ -144,7 +143,7 @@
   var elLevel = document.getElementById('s-level');
   var elLines = document.getElementById('s-lines');
   var overlay = document.getElementById('overlay');
-  var nexts = [0, 1, 2].map(function (i) { return document.getElementById('n' + i); });
+  var nexts = [document.getElementById('n0')];   // 只预览下一个方块
 
   var ICONS = {
     move: '<svg class="gicon" viewBox="0 0 32 32" fill="none"><rect x="10" y="10" width="12" height="12" rx="2.5" fill="#7c5cf5"/><path d="M6.5 16H2.5M2.5 16l2.4-2.4M2.5 16l2.4 2.4" stroke="#8f8ad0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M25.5 16h4M29.5 16l-2.4-2.4M29.5 16l2.4 2.4" stroke="#8f8ad0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -170,11 +169,16 @@
       for (var i = 0; i < nexts.length; i++) {
         var c = nexts[i];
         var dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-        var w = c.clientWidth || 24, h = c.clientHeight || 26;
+        // 强制布局同步：确保 flex 已算完，取到准确的渲染尺寸
+        var rect = c.getBoundingClientRect();
+        var w = rect.width || c.clientWidth || 52;
+        var h = rect.height || c.clientHeight || 42;
         c.width = w * dpr; c.height = h * dpr;
+        c.style.width = w + 'px';   // 显式锁定，防止 flex 回缩导致偏移
         var cx = c.getContext('2d');
         cx.setTransform(dpr, 0, 0, dpr, 0, 0);
         if (list[i]) TZ.Renderer.drawMini(cx, list[i], w, h);
+        else cx.clearRect(0, 0, w, h);
       }
     },
     hideOverlay: function () { overlay.classList.add('hidden'); },
@@ -237,13 +241,13 @@
     game.togglePause();
   };
 
-  ui.renderNext(game.bag.peek(3));
+  ui.renderNext(game.bag.peek(1));
   ui.showStart();
   game.loop();
 
   window.addEventListener('resize', function () {
     fit();   // 画布由 ResizeObserver 自动跟进，无需在此手动 resize
-    setTimeout(function () { ui.renderNext(game.bag.peek(3)); }, 60);
+    setTimeout(function () { ui.renderNext(game.bag.peek(1)); }, 60);
   });
 })();
 </script>

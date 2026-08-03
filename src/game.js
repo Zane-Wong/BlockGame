@@ -179,7 +179,7 @@
     // 生成在可见区第一行，否则新块藏在缓冲区里，玩家既看不见也抓不到
     this.piece.y = this.board.buffer;
     this.dropAcc = 0; this.lockTimer = 0; this.lockResets = 0; this.grounded = false;
-    this.ui.renderNext(this.bag.peek(3));
+    this.ui.renderNext(this.bag.peek(1));
     if (this.board.isTopOut(this.piece)) {
       this.piece.y = this.board.buffer - 1;   // 顶部拥挤时允许上移一格再试
       if (this.board.isTopOut(this.piece)) this.gameOver();
@@ -483,12 +483,13 @@
         this.renderer.ghost(this.piece, this.board.dropY(this.piece), b);
       }
 
+      var glow = g.mode === 'NAVIGATE' ? 0.55 : (g.mode === 'CHARGE' ? 0.3 + g.charge * 0.6 : 0);
+      this.renderer.piece(this.piece, b, { glow: glow || undefined });
+
+      // 皮筋要覆盖在方块之上，才有「兜住方块」的层次感
       if (g.mode === 'CHARGE') {
         this.renderer.slingshot(this.piece, g.charge, b, this.board.dropY(this.piece));
       }
-
-      var glow = g.mode === 'NAVIGATE' ? 0.55 : (g.mode === 'CHARGE' ? 0.3 + g.charge * 0.6 : 0);
-      this.renderer.piece(this.piece, b, { glow: glow || undefined });
     }
 
     this.particles.draw(ctx);

@@ -237,45 +237,125 @@
     ctx.globalAlpha = 1;
   };
 
-  /* 蓄力弹弓：皮筋 + 力度轨迹 */
+  /* 蓄力弹弓
+   * 皮筋兜住方块顶边，两端锚点固定在左右墙上、且始终低于方块最低一格。
+   * 锚点位置在蓄力开始时就确定，蓄力期间不变；只有绳身张力和颜色随力度变化。
+   * 注意：需在方块之后绘制，绳子才会覆盖在方块上。
+   */
   Renderer.prototype.slingshot = function (piece, power, buffer, dropY) {
-    var ctx = this.ctx, L = this.L;
+    var ctx = this.ctx, L = this.L, cell = L.cell, i;
     var cells = piece.cells();
     var minX = 99, maxX = -99, minY = 99, maxY = -99;
-    for (var i = 0; i < cells.length; i++) {
+    for (i = 0; i < cells.length; i++) {
       minX = Math.min(minX, cells[i][0]); maxX = Math.max(maxX, cells[i][0]);
       minY = Math.min(minY, cells[i][1]); maxY = Math.max(maxY, cells[i][1]);
     }
-    var cx = L.x + (minX + maxX + 1) / 2 * L.cell;
-    var topY = L.y + (minY - buffer) * L.cell;
-    var botY = L.y + (maxY + 1 - buffer) * L.cell;
-    var pull = power * L.cell * 1.5;
+    // 顶行的真实跨度：皮筋兜在最高那几格上，而不是包围盒（S/Z/T/L/J 差别明显）
+    var tMinX = 99, tMaxX = -99;
+    for (i = 0; i < cells.length; i++) {
+      if (cells[i][1] === minY) {
+        tMinX = Math.min(tMinX, cells[i][0]); tMaxX = Math.max(tMaxX, cells[i][0]);
+      }
+    }
 
-    // 皮筋：从棋盘顶部两侧拉向方块
-    var anchorY = L.y + 2;
-    ctx.strokeStyle = rgba(piece.color, 0.35 + 0.5 * power);
-    ctx.lineWidth = 1.5 + 2.5 * power;
+    var cx = L.x + (minX + maxX + 1) / 2 * cell;
+    var topY = L.y + (minY - buffer) * cell;
+    var botY = L.y + (maxY + 1 - buffer) * cell;
+    var boardL = L.x, boardR = L.x + L.cols * cell, boardB = L.y + L.rows * cell;
+    var slack = 1 - power;
+
+    // ── 锚点：固定不动，低于方块最低一格约一格半的位置 ──
+    var ax0 = boardL + cell * 0.14, ax1 = boardR - cell * 0.14;
+    var anchorY = botY + cell * 1.5;
+    if (anchorY > boardB - cell * 0.3) anchorY = boardB - cell * 0.3;
+
+    // 兜带：压在方块顶边上，蓄力越满压得越平
+    var pouchY = topY + cell * 0.09;
+    var pouchL = L.x + tMinX * cell;
+    var pouchR = L.x + (tMaxX + 1) * cell;
+    var pouchMid = (pouchL + pouchR) / 2;
+
+    var col = power > 0.85 ? '#ffd84d' : piece.color;
+    // 弓度：松弛时下垂明显，绷紧时趋近直线；全程由 slack 控制
+    var bow = cell * (0.12 + 0.75 * slack);
+    var m1x = (ax0 + pouchL) / 2, m1y = (anchorY + pouchY) / 2;
+    var m2x = (ax1 + pouchR) / 2, m2y = (anchorY + pouchY) / 2;
+
+    function bandPath() {
+      ctx.beginPath();
+      ctx.moveTo(ax0, anchorY);
+      ctx.quadraticCurveTo(m1x - bow * 0.32, m1y + bow, pouchL, pouchY);
+      ctx.quadraticCurveTo(pouchMid, pouchY - cell * 0.24 * slack, pouchR, pouchY);
+      ctx.quadraticCurveTo(m2x + bow * 0.32, m2y + bow, ax1, anchorY);
+      ctx.stroke();
+    }
+
+    ctx.save();
     ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(L.x + 6, anchorY);
-    ctx.lineTo(cx, topY - 2 + pull * 0.15);
-    ctx.lineTo(L.x + L.cols * L.cell - 6, anchorY);
-    ctx.stroke();
+    ctx.lineJoin = 'round';
+
+    // 三层线：粗底色 + 细主色 + 高光芯。颜色从虚到显但最终不刺眼
+    var lw = cell * (0.15 - 0.04 * power);        // 拉伸越紧绳身越细
+    ctx.strokeStyle = rgba(col, 0.10 + 0.18 * power);
+    ctx.lineWidth = lw + cell * 0.20;
+    bandPath();
+    ctx.strokeStyle = rgba(col, 0.42 + 0.35 * power);
+    ctx.lineWidth = lw;
+    bandPath();
+    ctx.strokeStyle = rgba('#ffffff', 0.08 + 0.18 * power);
+    ctx.lineWidth = Math.max(0.7, lw * 0.26);
+    bandPath();
+
+    // 墙上的锚桩（大小和颜色也固定，不随力度变化）
+    for (i = 0; i < 2; i++) {
+      var px = i ? ax1 : ax0;
+      ctx.beginPath();
+      ctx.arc(px, anchorY, cell * 0.22, 0, Math.PI * 2);
+      ctx.strokeStyle = rgba(col, 0.30);
+      ctx.lineWidth = 1.3;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(px, anchorY, cell * 0.11, 0, Math.PI * 2);
+      ctx.fillStyle = rgba(col, 0.65);
+      ctx.fill();
+    }
+    ctx.restore();
 
     // 发射轨迹
-    var targetY = L.y + (dropY + (maxY - minY) + 1 - buffer) * L.cell;
-    var grad = ctx.createLinearGradient(cx, botY, cx, targetY);
-    grad.addColorStop(0, rgba(piece.color, 0.55 * (0.3 + power)));
-    grad.addColorStop(1, rgba(piece.color, 0));
-    ctx.fillStyle = grad;
-    var halfW = L.cell * (0.18 + 0.30 * power);
-    ctx.fillRect(cx - halfW, botY, halfW * 2, Math.max(0, targetY - botY));
+    var targetY = L.y + (dropY + (maxY - minY) + 1 - buffer) * cell;
+    if (targetY > botY) {
+      var grad = ctx.createLinearGradient(cx, botY, cx, targetY);
+      grad.addColorStop(0, rgba(piece.color, 0.55 * (0.3 + power)));
+      grad.addColorStop(1, rgba(piece.color, 0));
+      ctx.fillStyle = grad;
+      var halfW = cell * (0.18 + 0.30 * power);
+      ctx.fillRect(cx - halfW, botY, halfW * 2, targetY - botY);
 
-    // 力度环
+      // 加速指示：轨迹上的下行箭头，力度越大越亮
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 2;
+      for (i = 1; i <= 3; i++) {
+        var t = i / 4;
+        var ay = botY + (targetY - botY) * t;
+        var aw = cell * (0.18 + 0.16 * power);
+        ctx.strokeStyle = rgba(col, (0.08 + 0.50 * power) * (1 - t * 0.55));
+        ctx.beginPath();
+        ctx.moveTo(cx - aw, ay - aw * 0.55);
+        ctx.lineTo(cx, ay + aw * 0.4);
+        ctx.lineTo(cx + aw, ay - aw * 0.55);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // 力度环（贴在方块上方，靠近顶部时自动下移避免出界）
+    var ringY = Math.max(L.y + cell * 0.5, topY - cell * 0.62);
     ctx.globalAlpha = 0.9;
     ctx.beginPath();
-    ctx.arc(cx, topY - L.cell * 0.55, L.cell * 0.34, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * power);
-    ctx.strokeStyle = power > 0.85 ? '#ffd84d' : piece.color;
+    ctx.arc(cx, ringY, cell * 0.34, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * power);
+    ctx.strokeStyle = col;
     ctx.lineWidth = 3.5;
     ctx.stroke();
     ctx.globalAlpha = 1;
@@ -285,7 +365,7 @@
       ctx.fillStyle = '#ffd84d';
       ctx.font = '600 12px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('MAX', cx, topY - L.cell * 0.55 + 4);
+      ctx.fillText('MAX', cx, ringY + 4);
       ctx.globalAlpha = 1;
     }
   };
@@ -300,14 +380,17 @@
       minY = Math.min(minY, shape[i][1]); maxY = Math.max(maxY, shape[i][1]);
     }
     var bw = maxX - minX + 1, bh = maxY - minY + 1;
-    var cell = Math.min(w / (bw + 0.6), h / (bh + 0.6));
+    // 用整数格边距保证像素对齐，避免亚像素偏移导致视觉偏移
+    var pad = Math.max(2, Math.round(Math.min(w, h) * 0.10));
+    var cell = Math.min((w - pad * 2) / bw, (h - pad * 2) / bh);
+    // 居中：让包围盒几何中心与画布中心对齐
     var ox = (w - bw * cell) / 2 - minX * cell;
     var oy = (h - bh * cell) / 2 - minY * cell;
     var color = TZ.COLORS[type];
     for (var j = 0; j < shape.length; j++) {
-      var x = ox + shape[j][0] * cell + 1;
-      var y = oy + shape[j][1] * cell + 1;
-      var s = cell - 2;
+      var x = Math.round(ox + shape[j][0] * cell);
+      var y = Math.round(oy + shape[j][1] * cell);
+      var s = Math.round(cell - 2);
       roundRect(ctx, x, y, s, s, s * 0.2);
       ctx.fillStyle = color; ctx.fill();
       ctx.globalAlpha = 0.45;
