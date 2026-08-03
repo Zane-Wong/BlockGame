@@ -22,6 +22,9 @@
  *                          ├─ 横向位移超阈值 ────→ MOVE（空白处也可横滑，操作面积更大）
  *                          └─ 上滑超阈值 ────────→ ROTATE
  *
+ * CHARGE 是「边蓄力边瞄准」的复合态：力度只由按住时长决定，横向滑动仍逐格
+ * 带动方块，玩家可以在蓄满的同时把落点挪到想要的列，不必松手重来。
+ *
  * 判定逻辑与事件绑定解耦：handleDown/handleMove/handleUp 是纯逻辑，
  * 迁移到小程序时只需替换 attach() 里的事件监听层。
  */
@@ -41,6 +44,8 @@
     ROT_LOCK: 1.35,      // 旋转需纵向分量超横向该倍数（收紧，斜滑不再误判为旋转）
     MOVE_LOCK: 1.0,      // 横移只需横向占优即可（放宽，避免与旋转之间出现死区）
     CHARGE_MS: 850,      // 蓄满所需时长
+    CHARGE_MOVE: 1.15,   // 蓄力期间横移步长（格）。手指处于按压状态抖动更大，
+                         // 比常规横移略钝一点，既能瞄准又不会误触
     TAP_MS: 180,         // 轻点判定
     TAP_DIST: 10
   };
@@ -167,6 +172,7 @@
         self.mode = 'CHARGE';
         self.charging = true;
         self.charge = 0;
+        self.anchorX = self.lastX;   // 以进入蓄力那一刻为横移起点，抵消长按期间的手指漂移
         self.h.onChargeStart();
       }
     }, P.HOLD_MS);
@@ -200,6 +206,7 @@
         } else {
           this.mode = 'CHARGE';
           this.charging = true; this.charge = 0;
+          this.anchorX = x;
           this.h.onChargeStart();
         }
         return;
@@ -256,19 +263,28 @@
       }
       return;
     }
-    // CHARGE 模式下位移不影响蓄力，力度只由时长决定
+
+    if (this.mode === 'CHARGE') {
+      // 蓄力与瞄准并行：横向滑动继续逐格移动方块，力度依旧只由按住时长决定。
+      // 步长比常规横移大一档，因为此时手指是「压住不动」的姿势，抖动幅度更大。
+      this.stepMove(x, cell * P.CHARGE_MOVE);
+      return;
+    }
   };
 
-  Gesture.prototype.stepMove = function (x, cell) {
+  /* 按 step 像素为一格逐级推进横移，锚点随之滚动，多格滑动会连续触发。
+   * eps 抵消锚点累加带来的浮点误差：位移正好是整格倍数时不能漏掉最后一格。 */
+  Gesture.prototype.stepMove = function (x, step) {
     var guard = 0;
-    while (x - this.anchorX >= cell && guard++ < 20) {
+    var eps = step * 1e-6;
+    while (x - this.anchorX >= step - eps && guard++ < 20) {
       var ok = this.h.onMove(1);
-      this.anchorX += cell;
+      this.anchorX += step;
       if (!ok) { this.anchorX = x; break; }   // 撞墙则重置锚点，避免位移累积
     }
-    while (this.anchorX - x >= cell && guard++ < 20) {
+    while (this.anchorX - x >= step - eps && guard++ < 20) {
       var ok2 = this.h.onMove(-1);
-      this.anchorX -= cell;
+      this.anchorX -= step;
       if (!ok2) { this.anchorX = x; break; }
     }
   };

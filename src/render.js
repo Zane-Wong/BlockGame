@@ -387,22 +387,36 @@
     }
 
     // 力度环（贴在方块上方，靠近顶部时自动下移避免出界）
+    var ringR = cell * 0.34;
+    var ringW = 3.5;
     var ringY = Math.max(L.y + cell * 0.5, topY - cell * 0.62);
     ctx.globalAlpha = 0.9;
     ctx.beginPath();
-    ctx.arc(cx, ringY, cell * 0.34, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * power);
+    ctx.arc(cx, ringY, ringR, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * power);
     ctx.strokeStyle = col;
-    ctx.lineWidth = 3.5;
+    ctx.lineWidth = ringW;
     ctx.stroke();
     ctx.globalAlpha = 1;
 
     if (power > 0.98) {
-      ctx.globalAlpha = 0.8;
-      ctx.fillStyle = '#ffd84d';
-      ctx.font = '600 12px system-ui, sans-serif';
+      /* MAX 必须完全落在环内：环内径随格子大小变化，字号也得跟着算，
+       * 再用 measureText 兜一次底 —— 字体回退到宽体时同样不会撑出去。 */
+      var innerR = ringR - ringW * 0.5 - 1;      // 环线内侧可用半径
+      var maxW = innerR * 1.66;                  // 留出左右余量的内接弦长
+      var fs = Math.min(10, Math.max(5.5, cell * 0.29));
       ctx.textAlign = 'center';
-      ctx.fillText('MAX', cx, ringY + 4);
+      ctx.textBaseline = 'middle';
+      ctx.font = '700 ' + fs.toFixed(1) + 'px system-ui, sans-serif';
+      var tw = ctx.measureText('MAX').width;
+      if (tw > maxW) {
+        fs = fs * maxW / tw;
+        ctx.font = '700 ' + fs.toFixed(1) + 'px system-ui, sans-serif';
+      }
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = '#ffd84d';
+      ctx.fillText('MAX', cx, ringY);
       ctx.globalAlpha = 1;
+      ctx.textBaseline = 'alphabetic';           // 复位，避免污染后续绘制
     }
   };
 
