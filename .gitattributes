@@ -1,0 +1,9 @@
+# 统一以 LF 存入仓库，避免跨平台行尾污染 diff
+* text=auto eol=lf
+
+# 二进制资源不做转换
+*.png binary
+*.jpg binary
+*.webp binary
+*.mp3 binary
+*.wav binary

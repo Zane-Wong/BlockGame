@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>魔方坠落 · 手势俄罗斯方块</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #05060d;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow: hidden; overscroll-behavior: none;
+  }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 0%, rgba(110,80,220,0.20), transparent 70%),
+      radial-gradient(ellipse 70% 50% at 50% 100%, rgba(30,180,190,0.14), transparent 70%),
+      #05060d;
+  }
+  #app {
+    width: 100%; max-width: 440px; height: 100%; max-height: 940px;
+    display: flex; flex-direction: column;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    position: relative;
+  }
+
+  /* ---------- 顶栏 ---------- */
+  .hud { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
+  .stats { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .cardk {
+    background: rgba(255,255,255,0.045);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px; padding: 6px 9px;
+  }
+  .cardk .k { font-size: 9px; letter-spacing: .14em; color: rgba(255,255,255,0.4); text-transform: uppercase; }
+  .cardk .v { font-size: 17px; font-weight: 600; color: #fff; line-height: 1.25; font-variant-numeric: tabular-nums; }
+  .cardk.wide { grid-column: span 2; }
+  .cardk.wide .v { color: #ffd84d; }
+
+  .nextbox {
+    width: 82px; background: rgba(255,255,255,0.045);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px; padding: 6px; display: flex; flex-direction: column; gap: 3px;
+  }
+  .nextbox .k { font-size: 9px; letter-spacing: .14em; color: rgba(255,255,255,0.4); text-align: center; }
+  .nextrow { display: flex; gap: 3px; flex: 1; align-items: center; }
+  .nextrow canvas { flex: 1; height: 26px; display: block; }
+  .nextrow canvas:first-child { flex: 1.5; height: 34px; }
+
+  /* ---------- 舞台 ---------- */
+  #stage { flex: 1; position: relative; min-height: 0; }
+  /* 绝对定位贴合舞台：画布不参与流式布局，尺寸失配时也不会把内容顶偏 */
+  #board { display: block; touch-action: none; position: absolute; left: 0; top: 0; }
+
+  /* ---------- 底栏 ---------- */
+  .footer { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .hint {
+    flex: 1; font-size: 11px; color: rgba(255,255,255,0.42); line-height: 1.5;
+    background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px; padding: 7px 10px;
+  }
+  .hint b { color: rgba(255,255,255,0.72); font-weight: 500; }
+  .btn {
+    border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06);
+    color: #fff; border-radius: 10px; padding: 9px 14px; font-size: 13px;
+    cursor: pointer; font-family: inherit;
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+
+  /* ---------- 遮罩 ---------- */
+  #overlay {
+    position: absolute; inset: 0; z-index: 10;
+    background: rgba(5,6,13,0.92); backdrop-filter: blur(6px);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 24px; text-align: center;
+  }
+  #overlay.hidden { display: none; }
+  #overlay h1 { font-size: 26px; color: #fff; margin: 0 0 4px; font-weight: 600; letter-spacing: .02em; }
+  #overlay .sub { font-size: 12px; color: rgba(255,255,255,0.45); margin-bottom: 20px; letter-spacing: .1em; }
+  .guide { width: 100%; max-width: 300px; display: flex; flex-direction: column; gap: 9px; margin-bottom: 22px; }
+  .grow {
+    display: flex; align-items: center; gap: 11px; text-align: left;
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 11px; padding: 9px 11px;
+  }
+  .gicon { width: 30px; height: 30px; flex-shrink: 0; }
+  .gtext { font-size: 12px; color: rgba(255,255,255,0.82); line-height: 1.45; }
+  .gtext em { display: block; font-style: normal; font-size: 10.5px; color: rgba(255,255,255,0.42); margin-top: 1px; }
+  .cta {
+    background: linear-gradient(135deg, #7c5cf5, #4ac2d8); border: none; color: #fff;
+    padding: 13px 46px; border-radius: 12px; font-size: 15px; font-weight: 600;
+    cursor: pointer; font-family: inherit; letter-spacing: .05em;
+  }
+  .cta:active { opacity: .85; }
+  .final { display: flex; gap: 26px; margin-bottom: 22px; }
+  .final div { text-align: center; }
+  .final .fk { font-size: 10px; color: rgba(255,255,255,0.4); letter-spacing: .12em; }
+  .final .fv { font-size: 25px; color: #fff; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .final .fv.gold { color: #ffd84d; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="hud">
+    <div class="stats">
+      <div class="cardk wide"><div class="k">Score</div><div class="v" id="s-score">0</div></div>
+      <div class="cardk"><div class="k">Level</div><div class="v" id="s-level">0</div></div>
+      <div class="cardk"><div class="k">Lines</div><div class="v" id="s-lines">0</div></div>
+    </div>
+    <div class="nextbox">
+      <div class="k">NEXT</div>
+      <div class="nextrow">
+        <canvas id="n0"></canvas><canvas id="n1"></canvas><canvas id="n2"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div id="stage"><canvas id="board"></canvas></div>
+
+  <div class="footer">
+    <div class="hint">
+      <b>横滑</b>移动 · <b>上滑</b>旋转 · <b>按住方块</b>拖到落点<br>
+      <b>长按空白</b>蓄力，松手弹射
+    </div>
+    <button class="btn" id="btn-pause">暂停</button>
+  </div>
+
+  <div id="overlay"></div>
+</div>
+
+<script src="src/core.js"></script>
+<script src="src/fx.js"></script>
+<script src="src/gesture.js"></script>
+<script src="src/render.js"></script>
+<script src="src/game.js"></script>
+<script>
+(function () {
+  'use strict';
+  var TZ = window.TZ;
+
+  var elScore = document.getElementById('s-score');
+  var elLevel = document.getElementById('s-level');
+  var elLines = document.getElementById('s-lines');
+  var overlay = document.getElementById('overlay');
+  var nexts = [0, 1, 2].map(function (i) { return document.getElementById('n' + i); });
+
+  var ICONS = {
+    move: '<svg class="gicon" viewBox="0 0 32 32" fill="none"><rect x="10" y="10" width="12" height="12" rx="2.5" fill="#7c5cf5"/><path d="M6.5 16H2.5M2.5 16l2.4-2.4M2.5 16l2.4 2.4" stroke="#8f8ad0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M25.5 16h4M29.5 16l-2.4-2.4M29.5 16l2.4 2.4" stroke="#8f8ad0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    rotate: '<svg class="gicon" viewBox="0 0 32 32" fill="none"><rect x="11" y="13" width="11" height="11" rx="2.5" fill="#4ac2d8"/><path d="M9 12a8.5 8.5 0 0 1 14.5 3" stroke="#7fd8e6" stroke-width="1.7" stroke-linecap="round" fill="none"/><path d="M8.4 7.6v4.8h4.8" stroke="#7fd8e6" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
+    nav: '<svg class="gicon" viewBox="0 0 32 32" fill="none"><rect x="11" y="4" width="10" height="10" rx="2.5" fill="#f2932b"/><path d="M16 15.5v8" stroke="#f5b96e" stroke-width="1.7" stroke-linecap="round" stroke-dasharray="2.6 2.6"/><rect x="11.5" y="24" width="9" height="5" rx="1.6" stroke="#f5b96e" stroke-width="1.6" stroke-dasharray="3 2.4" fill="none"/></svg>',
+    charge: '<svg class="gicon" viewBox="0 0 32 32" fill="none"><path d="M5 7c4.5 5 17.5 5 22 0" stroke="#ffd84d" stroke-width="1.7" stroke-linecap="round" fill="none"/><rect x="11.5" y="8.5" width="9" height="9" rx="2.2" fill="#ffd84d"/><path d="M16 20.5v7M16 28.5l-2.6-3M16 28.5l2.6-3" stroke="#ffb84d" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+  };
+
+  var GUIDE = [
+    [ICONS.move, '左右横滑', '棋盘任意处滑动，方块逐格跟手'],
+    [ICONS.rotate, '向上滑动旋转', '偏左逆时针，偏右顺时针'],
+    [ICONS.nav, '按住方块拖到落点', '松手自动寻路就位'],
+    [ICONS.charge, '长按空白蓄力', '松手弹射，力度越大分越高']
+  ];
+
+  var ui = {
+    setStats: function (score, level, lines, best) {
+      elScore.textContent = score;
+      elLevel.textContent = level;
+      elLines.textContent = lines;
+    },
+    renderNext: function (list) {
+      for (var i = 0; i < nexts.length; i++) {
+        var c = nexts[i];
+        var dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+        var w = c.clientWidth || 24, h = c.clientHeight || 26;
+        c.width = w * dpr; c.height = h * dpr;
+        var cx = c.getContext('2d');
+        cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        if (list[i]) TZ.Renderer.drawMini(cx, list[i], w, h);
+      }
+    },
+    hideOverlay: function () { overlay.classList.add('hidden'); },
+    showStart: function () {
+      var rows = GUIDE.map(function (g) {
+        return '<div class="grow">' + g[0] + '<div class="gtext">' + g[1] + '<em>' + g[2] + '</em></div></div>';
+      }).join('');
+      overlay.innerHTML =
+        '<h1>魔方坠落</h1><div class="sub">GESTURE TETRIS</div>' +
+        '<div class="guide">' + rows + '</div>' +
+        '<button class="cta" id="cta">开始游戏</button>';
+      overlay.classList.remove('hidden');
+      document.getElementById('cta').onclick = function () { game.start(); };
+    },
+    showPause: function () {
+      overlay.innerHTML = '<h1>已暂停</h1><div class="sub">PAUSED</div><button class="cta" id="cta">继续</button>';
+      overlay.classList.remove('hidden');
+      document.getElementById('cta').onclick = function () { game.togglePause(); };
+    },
+    showOver: function (score, lines, best) {
+      var isNew = score >= best && score > 0;
+      overlay.innerHTML =
+        '<h1>' + (isNew ? '新纪录' : '游戏结束') + '</h1>' +
+        '<div class="sub">' + (isNew ? 'NEW RECORD' : 'GAME OVER') + '</div>' +
+        '<div class="final">' +
+        '<div><div class="fk">SCORE</div><div class="fv' + (isNew ? ' gold' : '') + '">' + score + '</div></div>' +
+        '<div><div class="fk">LINES</div><div class="fv">' + lines + '</div></div>' +
+        '<div><div class="fk">BEST</div><div class="fv">' + best + '</div></div>' +
+        '</div><button class="cta" id="cta">再来一局</button>';
+      overlay.classList.remove('hidden');
+      document.getElementById('cta').onclick = function () { game.start(); };
+    }
+  };
+
+  /* 响应式：由可用高度反推最佳宽度，避免高度不足时两边大片留白。
+     必须在创建 Game 之前先定好宽度，否则画布会按旧宽度初始化。 */
+  var appEl = document.getElementById('app');
+  var stageEl = document.getElementById('stage');
+  var COLS = 10, ROWS = 20;
+  var PAD_X = 24;    // #app 左右 padding 合计
+  var INSET = 14;    // game.resize() 中棋盘四周的内缩量，需保持一致
+  function fit() {
+    // 先解除限制，量出当前视口下舞台的真实可用高度
+    appEl.style.maxWidth = '';
+    for (var i = 0; i < 2; i++) {   // 两遍：底栏文案换行会反过来影响舞台高度
+      var stageH = stageEl.clientHeight;
+      if (stageH <= 0) return;
+      var cell = Math.floor((stageH - INSET) / ROWS);
+      var ideal = cell * COLS + INSET + PAD_X;
+      appEl.style.maxWidth = Math.max(300, Math.min(440, ideal)) + 'px';
+    }
+  }
+  fit();
+
+  var game = new TZ.Game({ canvas: document.getElementById('board'), ui: ui });
+  window._game = game;
+
+  document.getElementById('btn-pause').onclick = function () {
+    if (game.state === TZ.Game.STATE.READY || game.state === TZ.Game.STATE.OVER) return;
+    game.togglePause();
+  };
+
+  ui.renderNext(game.bag.peek(3));
+  ui.showStart();
+  game.loop();
+
+  window.addEventListener('resize', function () {
+    fit();   // 画布由 ResizeObserver 自动跟进，无需在此手动 resize
+    setTimeout(function () { ui.renderNext(game.bag.peek(3)); }, 60);
+  });
+})();
+</script>
+</body>
+</html>
