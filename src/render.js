@@ -1,5 +1,18 @@
-/* render.js - Canvas 渲染层
- * 所有绘制使用逻辑像素（CSS px），DPR 缩放由主程序统一处理。
+/*!
+ * ============================================================================
+ *  魔方坠落 · 手势俄罗斯方块  (Gesture Tetris)
+ * ----------------------------------------------------------------------------
+ *  @file         src/render.js
+ *  @description  Canvas 渲染层：棋盘、方块、幽灵、导航指示与蓄力弹弓
+ *  @author       wangzhuo <mail_zhuo@163.com>
+ *  @contact      mail_zhuo@163.com
+ *  @copyright    Copyright (c) 2026 wangzhuo. All rights reserved.
+ *  @license      本项目为 wangzhuo 原创作品，受著作权法保护。
+ *                未经作者书面许可，不得复制、修改、分发或用于任何商业用途。
+ * ============================================================================
+ *
+ *  render.js - Canvas 渲染层
+ *  所有绘制使用逻辑像素（CSS px），DPR 缩放由主程序统一处理。
  */
 (function (global) {
   'use strict';
@@ -321,33 +334,56 @@
     }
     ctx.restore();
 
-    // 发射轨迹
+    /* ── 发射轨迹光柱 ──────────────────────────────────────────────
+     * 等宽矩形光带（不外扩），上下两端不透明度都归零：
+     *   上边界紧贴方块底边，若在此保留实色会出现一条硬接缝（违和感来源），
+     *   淡出后光柱像是从方块内部渗出来的；
+     *   下边界同样淡出，避免在落点处被生硬截断。
+     * 亮度峰值落在中段，形成一条有呼吸感的光带；宽度只随蓄力强度整体变化。
+     */
     var targetY = L.y + (dropY + (maxY - minY) + 1 - buffer) * cell;
-    if (targetY > botY) {
-      var grad = ctx.createLinearGradient(cx, botY, cx, targetY);
-      grad.addColorStop(0, rgba(piece.color, 0.55 * (0.3 + power)));
-      grad.addColorStop(1, rgba(piece.color, 0));
-      ctx.fillStyle = grad;
-      var halfW = cell * (0.18 + 0.30 * power);
-      ctx.fillRect(cx - halfW, botY, halfW * 2, targetY - botY);
+    var beamH = targetY - botY;
+    if (beamH > cell * 0.3) {
+      var peak = 0.15 + 0.33 * power;            // 中段最亮处的不透明度
+      var wBeam = cell * (0.16 + 0.24 * power);  // 半宽，上下等宽
 
-      // 加速指示：轨迹上的下行箭头，力度越大越亮
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.lineWidth = 2;
-      for (i = 1; i <= 3; i++) {
-        var t = i / 4;
-        var ay = botY + (targetY - botY) * t;
-        var aw = cell * (0.18 + 0.16 * power);
-        ctx.strokeStyle = rgba(col, (0.08 + 0.50 * power) * (1 - t * 0.55));
-        ctx.beginPath();
-        ctx.moveTo(cx - aw, ay - aw * 0.55);
-        ctx.lineTo(cx, ay + aw * 0.4);
-        ctx.lineTo(cx + aw, ay - aw * 0.55);
-        ctx.stroke();
+      var grad = ctx.createLinearGradient(cx, botY, cx, targetY);
+      grad.addColorStop(0.00, rgba(piece.color, 0));           // 上边界全透明
+      grad.addColorStop(0.18, rgba(piece.color, peak * 0.72));
+      grad.addColorStop(0.46, rgba(piece.color, peak));        // 中段最实
+      grad.addColorStop(0.78, rgba(piece.color, peak * 0.40));
+      grad.addColorStop(1.00, rgba(piece.color, 0));           // 下边界全透明
+      ctx.fillStyle = grad;
+      ctx.fillRect(cx - wBeam, botY, wBeam * 2, beamH);
+
+      // 芯线：更窄的一道白光，同样两端淡出，强化「柱」的纵深
+      var core = ctx.createLinearGradient(cx, botY, cx, targetY);
+      core.addColorStop(0.00, rgba('#ffffff', 0));
+      core.addColorStop(0.42, rgba('#ffffff', 0.04 + 0.12 * power));
+      core.addColorStop(1.00, rgba('#ffffff', 0));
+      ctx.fillStyle = core;
+      ctx.fillRect(cx - wBeam * 0.38, botY, wBeam * 0.76, beamH);
+
+      // 加速指示：下行箭头，用 sin 包络让首尾也淡下去，与光柱同步
+      if (beamH > cell * 1.6) {
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 2;
+        for (i = 1; i <= 3; i++) {
+          var t = i / 4;
+          var ay = botY + beamH * t;
+          var aw = cell * (0.18 + 0.16 * power);
+          var env = Math.sin(Math.PI * t) * (1 - t * 0.35);
+          ctx.strokeStyle = rgba(col, (0.10 + 0.55 * power) * env);
+          ctx.beginPath();
+          ctx.moveTo(cx - aw, ay - aw * 0.55);
+          ctx.lineTo(cx, ay + aw * 0.4);
+          ctx.lineTo(cx + aw, ay - aw * 0.55);
+          ctx.stroke();
+        }
+        ctx.restore();
       }
-      ctx.restore();
     }
 
     // 力度环（贴在方块上方，靠近顶部时自动下移避免出界）
@@ -406,3 +442,5 @@
   TZ.Renderer = Renderer;
 
 })(typeof window !== 'undefined' ? window : this);
+
+/* @author wangzhuo <mail_zhuo@163.com> - 魔方坠落 Gesture Tetris | 版权所有，翻版必究 */

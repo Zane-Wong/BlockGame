@@ -1,4 +1,17 @@
-/* gesture.js - 单指手势状态机
+/*!
+ * ============================================================================
+ *  魔方坠落 · 手势俄罗斯方块  (Gesture Tetris)
+ * ----------------------------------------------------------------------------
+ *  @file         src/gesture.js
+ *  @description  单指手势状态机（横移 / 旋转 / 落点导航 / 蓄力弹射）
+ *  @author       wangzhuo <mail_zhuo@163.com>
+ *  @contact      mail_zhuo@163.com
+ *  @copyright    Copyright (c) 2026 wangzhuo. All rights reserved.
+ *  @license      本项目为 wangzhuo 原创作品，受著作权法保护。
+ *                未经作者书面许可，不得复制、修改、分发或用于任何商业用途。
+ * ============================================================================
+ *
+ * gesture.js - 单指手势状态机
  *
  * 四种操作共用一根手指，靠「触点归属 + 位移方向 + 停留时长」三重判定分流：
  *
@@ -299,3 +312,5 @@
   TZ.Gesture = Gesture;
 
 })(typeof window !== 'undefined' ? window : this);
+
+/* @author wangzhuo <mail_zhuo@163.com> - 魔方坠落 Gesture Tetris | 版权所有，翻版必究 */

@@ -1,6 +1,19 @@
-/* core.js - 棋盘、方块、SRS 旋转与落点寻路
- * 纯逻辑层，不依赖任何 DOM / Canvas，可直接移植到小程序。
- * 坐标系：x 向右为正，y 向下为正（屏幕坐标）。
+/*!
+ * ============================================================================
+ *  魔方坠落 · 手势俄罗斯方块  (Gesture Tetris)
+ * ----------------------------------------------------------------------------
+ *  @file         src/core.js
+ *  @description  棋盘、方块、SRS 旋转与落点寻路
+ *  @author       wangzhuo <mail_zhuo@163.com>
+ *  @contact      mail_zhuo@163.com
+ *  @copyright    Copyright (c) 2026 wangzhuo. All rights reserved.
+ *  @license      本项目为 wangzhuo 原创作品，受著作权法保护。
+ *                未经作者书面许可，不得复制、修改、分发或用于任何商业用途。
+ * ============================================================================
+ *
+ *  core.js - 棋盘、方块、SRS 旋转与落点寻路
+ *  纯逻辑层，不依赖任何 DOM / Canvas，可直接移植到小程序。
+ *  坐标系：x 向右为正，y 向下为正（屏幕坐标）。
  */
 (function (global) {
   'use strict';
@@ -347,3 +360,5 @@
   TZ.scoreFor = scoreFor;
 
 })(typeof window !== 'undefined' ? window : this);
+
+/* @author wangzhuo <mail_zhuo@163.com> - 魔方坠落 Gesture Tetris | 版权所有，翻版必究 */

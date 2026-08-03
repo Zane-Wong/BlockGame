@@ -1,4 +1,18 @@
-/* game.js - 主循环与游戏状态机 */
+/*!
+ * ============================================================================
+ *  魔方坠落 · 手势俄罗斯方块  (Gesture Tetris)
+ * ----------------------------------------------------------------------------
+ *  @file         src/game.js
+ *  @description  主循环、游戏状态机与响应式布局
+ *  @author       wangzhuo <mail_zhuo@163.com>
+ *  @contact      mail_zhuo@163.com
+ *  @copyright    Copyright (c) 2026 wangzhuo. All rights reserved.
+ *  @license      本项目为 wangzhuo 原创作品，受著作权法保护。
+ *                未经作者书面许可，不得复制、修改、分发或用于任何商业用途。
+ * ============================================================================
+ *
+ *  game.js - 主循环与游戏状态机
+ */
 (function (global) {
   'use strict';
   var TZ = global.TZ;
@@ -518,3 +532,5 @@
   TZ.Game = Game;
 
 })(typeof window !== 'undefined' ? window : this);
+
+/* @author wangzhuo <mail_zhuo@163.com> - 魔方坠落 Gesture Tetris | 版权所有，翻版必究 */

@@ -1,8 +1,25 @@
 <!DOCTYPE html>
+<!--
+ ==============================================================================
+  魔方坠落 · 手势俄罗斯方块  (Gesture Tetris)
+ ------------------------------------------------------------------------------
+  @file         index.html
+  @description  页面外壳、样式、UI 层与启动逻辑
+  @author       wangzhuo <mail_zhuo@163.com>
+  @contact      mail_zhuo@163.com
+  @copyright    Copyright (c) 2026 wangzhuo. All rights reserved.
+  @license      本项目为 wangzhuo 原创作品，受著作权法保护。
+                未经作者书面许可，不得复制、修改、分发或用于任何商业用途。
+ ==============================================================================
+-->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="author" content="wangzhuo">
+<meta name="contact" content="mail_zhuo@163.com">
+<meta name="copyright" content="Copyright (c) 2026 wangzhuo. All rights reserved.">
+<meta name="description" content="魔方坠落 · 手势俄罗斯方块 — 作者 wangzhuo (mail_zhuo@163.com)">
 <title>魔方坠落 · 手势俄罗斯方块</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -98,6 +115,15 @@
   .final .fk { font-size: 10px; color: rgba(255,255,255,0.4); letter-spacing: .12em; }
   .final .fv { font-size: 25px; color: #fff; font-weight: 600; font-variant-numeric: tabular-nums; }
   .final .fv.gold { color: #ffd84d; }
+
+  /* 作者署名：固定在遮罩窗口底部居中 */
+  .sign {
+    position: absolute; left: 0; right: 0; bottom: 14px;
+    text-align: center; font-size: 11px; letter-spacing: .06em;
+    color: rgba(255,255,255,0.28); pointer-events: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  .sign b { font-weight: 600; color: rgba(255,255,255,0.42); }
 </style>
 </head>
 <body>
@@ -159,6 +185,9 @@
     [ICONS.charge, '长按空白蓄力', '松手弹射，力度越大分越高']
   ];
 
+  /* 作者署名 —— 版权标识，请勿移除。@author wangzhuo <mail_zhuo@163.com> */
+  var SIGN = '<div class="sign">作者 <b>@wangzhuo</b></div>';
+
   var ui = {
     setStats: function (score, level, lines, best) {
       elScore.textContent = score;
@@ -194,7 +223,8 @@
       document.getElementById('cta').onclick = function () { game.start(); };
     },
     showPause: function () {
-      overlay.innerHTML = '<h1>已暂停</h1><div class="sub">PAUSED</div><button class="cta" id="cta">继续</button>';
+      overlay.innerHTML = '<h1>已暂停</h1><div class="sub">PAUSED</div>' +
+        '<button class="cta" id="cta">继续</button>' + SIGN;
       overlay.classList.remove('hidden');
       document.getElementById('cta').onclick = function () { game.togglePause(); };
     },
@@ -207,7 +237,7 @@
         '<div><div class="fk">SCORE</div><div class="fv' + (isNew ? ' gold' : '') + '">' + score + '</div></div>' +
         '<div><div class="fk">LINES</div><div class="fv">' + lines + '</div></div>' +
         '<div><div class="fk">BEST</div><div class="fv">' + best + '</div></div>' +
-        '</div><button class="cta" id="cta">再来一局</button>';
+        '</div><button class="cta" id="cta">再来一局</button>' + SIGN;
       overlay.classList.remove('hidden');
       document.getElementById('cta').onclick = function () { game.start(); };
     }

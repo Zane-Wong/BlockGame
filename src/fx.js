@@ -1,5 +1,18 @@
-/* fx.js - 粒子、震屏、浮字与合成音效
- * 音效全部由 WebAudio 实时合成，不依赖任何外部资源文件。
+/*!
+ * ============================================================================
+ *  魔方坠落 · 手势俄罗斯方块  (Gesture Tetris)
+ * ----------------------------------------------------------------------------
+ *  @file         src/fx.js
+ *  @description  粒子、震屏、浮字与合成音效
+ *  @author       wangzhuo <mail_zhuo@163.com>
+ *  @contact      mail_zhuo@163.com
+ *  @copyright    Copyright (c) 2026 wangzhuo. All rights reserved.
+ *  @license      本项目为 wangzhuo 原创作品，受著作权法保护。
+ *                未经作者书面许可，不得复制、修改、分发或用于任何商业用途。
+ * ============================================================================
+ *
+ *  fx.js - 粒子、震屏、浮字与合成音效
+ *  音效全部由 WebAudio 实时合成，不依赖任何外部资源文件。
  */
 (function (global) {
   'use strict';
@@ -189,3 +202,5 @@
   TZ.Floaters = Floaters;
 
 })(typeof window !== 'undefined' ? window : this);
+
+/* @author wangzhuo <mail_zhuo@163.com> - 魔方坠落 Gesture Tetris | 版权所有，翻版必究 */
