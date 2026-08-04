@@ -57,7 +57,8 @@
     TAP_MS: 180,         // 轻点判定
     TAP_DIST: 10,
     DTAP_MS: 300,        // 双击间隔上限。比系统 500ms 短，避免「两次独立轻点」被误连成双击
-    DTAP_DIST: 34        // 两次点击的落点容差（像素），略大于一格，允许手指自然漂移
+    DTAP_DIST: 34,       // 两次点击的落点容差（像素），略大于一格，允许手指自然漂移
+    NAV_FOLLOW_MIN: 0.06 // 长按进入导航后，手指移动超过该格数（约 2.5px，横纵皆可）才切到「手指列跟随」。阈值极小，仅过滤长按松手瞬间的亚像素抖动，确保一滑动就完全跟手
   };
 
   /* hooks 需要提供：
@@ -107,6 +108,8 @@
     this.rotDir = 1;
     this.lastRotTime = 0;    // 上次旋转的时间戳，用于冷却判定
     this.navCol = null;
+    this.navFollow = false;   // 导航中是否已切到「手指列跟随」
+    this.navBaseCol = 0;      // 进入导航时的方块列（= 正下方起点），滑动 = 相对手指按下点的位移
     this.charging = false;
     this.charge = 0;
     if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; }
@@ -185,7 +188,8 @@
         self.mode = 'NAVIGATE';
         // 用方块实际中心列做导航起点，不依赖触点落在哪一格。
         // 否则宽方块（I/O）按在不同格子上会差 1~3 列，用户感觉「偏方向」。
-        self.navCol = self.h.getPieceCol ? self.h.getPieceCol() : self.colAt(self.lastX);
+        self.navFollow = false;   // 不动时保持中心列，滑动后才切到手指列
+        self.navCol = self.navBaseCol = self.h.getPieceCol ? self.h.getPieceCol() : self.colAt(self.lastX);
         self.h.onNavStart();
         self.h.onNavUpdate(self.navCol);
       } else {
@@ -198,10 +202,12 @@
     }, P.HOLD_MS);
   };
 
-  Gesture.prototype.colAt = function (x) {
+  Gesture.prototype.colAt = function (x, useGrab) {
+    if (useGrab === undefined) useGrab = true;
     var cell = this.h.getCell();
     var origin = this.h.getOrigin();
-    return Math.round((x - origin.x) / cell - this.grabOffset);
+    var off = useGrab ? this.grabOffset : 0;   // 导航滑动时忽略抓取偏移，落点直接对齐手指所在列
+    return Math.round((x - origin.x) / cell - off);
   };
 
   /* 判定旋转方向：以方块中心轴线把屏幕切成左右两半。
@@ -238,7 +244,8 @@
         clearTimeout(this.holdTimer);
         if (this.onPiece) {
           this.mode = 'NAVIGATE';
-          this.navCol = this.h.getPieceCol ? this.h.getPieceCol() : this.colAt(x);
+          this.navFollow = false;
+          this.navCol = this.navBaseCol = this.h.getPieceCol ? this.h.getPieceCol() : this.colAt(x);
           this.h.onNavStart();
           this.h.onNavUpdate(this.navCol);
         } else {
@@ -292,7 +299,19 @@
     }
 
     if (this.mode === 'NAVIGATE') {
-      var col = this.colAt(x);
+      // 不动时保持方块中心列（正下方，不左偏不右偏）；
+      // 手指滑动后，落点 = 起点方块列 + 相对手指按下点的位移，1:1 跟手且左右完全对称。
+      // 用相对位移而非「手指绝对列」，可消除 grabOffset 造成的进入瞬间右跳、左滑需多补偿行程的不对称感。
+      var cell = this.h.getCell();
+      if (!this.navFollow) {
+        var dx0 = x - this.startX, dy0 = y - this.startY;
+        if (Math.abs(dx0) < cell * P.NAV_FOLLOW_MIN &&
+            Math.abs(dy0) < cell * P.NAV_FOLLOW_MIN) {
+          return;   // 手指基本没动，维持中心列
+        }
+        this.navFollow = true;
+      }
+      var col = this.navBaseCol + Math.round((x - this.startX) / cell);
       if (col !== this.navCol) {
         this.navCol = col;
         this.h.onNavUpdate(col);

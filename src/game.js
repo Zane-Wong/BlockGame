@@ -129,10 +129,11 @@
       getCell: function () { return self.layout.cell; },
       getOrigin: function () { return { x: self.layout.x, y: self.layout.y }; },
 
+      /* 导航起始列：直接用 piece.x（锚点）。
+       * findPath(targetX) 把 targetX 当 piece.x 使用，
+       * 所以不能传视觉中心列（那会导致非对称方块偏移）。 */
       getPieceCol: function () {
-        if (!self.piece) return 0;
-        var s = pieceSpanCols();
-        return Math.round((s.min + s.max) / 2);
+        return self.piece ? self.piece.x : 0;
       },
 
       /* 方块几何中心轴线的像素 X。偶数宽方块（I/O）的轴线落在格边界上，
@@ -546,15 +547,18 @@
       var pcx = L.x + (mnx + mxx + 1) / 2 * L.cell;
       var pcy = L.y + ((mny + mxy + 1) / 2 - b) * L.cell;
 
-      // 旋转时让方块轻微「弹一下」，强化旋转动作本身
-      var popS = 1;
+      // 旋转时方块绕自身中心旋转（dir*90°→0）+ 轻微「弹一下」，强化旋转过程
+      var popS = 1, rotAng = 0;
       if (this.rotFx) {
         var rp = Math.max(0, Math.min(1, this.rotFx.t / this.rotFx.dur));
         popS = 1 + 0.16 * Math.sin(Math.PI * rp);
+        // 绘制的是最终 rot 的格子，叠加反向旋转：dir=+1 时从 -90°→0（屏幕顺时针回正），dir=-1 从 +90°→0（逆时针回正）
+        rotAng = -this.rotFx.dir * (1 - rp) * (Math.PI / 2);
       }
       ctx.save();
-      if (popS !== 1) {
+      if (popS !== 1 || rotAng !== 0) {
         ctx.translate(pcx, pcy);
+        ctx.rotate(rotAng);
         ctx.scale(popS, popS);
         ctx.translate(-pcx, -pcy);
       }
