@@ -63,6 +63,7 @@
     this.clearInfo = null;
     this.time = 0;
     this.rotFx = null;                  // 旋转方向动效状态
+    this.tutorial = null;               // 新手引导（由启动脚本注入）
 
     this.setupGesture();
     this.resize();
@@ -122,6 +123,9 @@
       return { min: min, max: max };
     }
 
+    // 捕获层用 #app（整个游戏容器），让棋盘以外的空白区域（HUD / 底栏 / padding）
+    // 也能响应手势；坐标仍相对棋盘 canvas 换算，判定逻辑无需改动。
+    var surface = (this.canvas.closest && this.canvas.closest('#app')) || this.canvas.parentElement || this.canvas;
     this.gesture = new TZ.Gesture(this.canvas, {
       isBusy: function () {
         return self.state !== STATE.PLAYING;
@@ -162,23 +166,51 @@
         return null;
       },
 
-      onMove: function (dir) { return self.move(dir); },
-      onRotate: function (dir) { return self.rotate(dir); },
-      onTapPiece: function () { self.rotate(1); },
-      onDoubleTap: function () { self.rotate(1); },   // 双击一律顺时针，不区分屏幕左右
+      onMove: function (dir) {
+        if (self.tutorial && self.tutorial.active) { self.tutorial.onMove(dir); return false; }
+        return self.move(dir);
+      },
+      onRotate: function (dir) {
+        if (self.tutorial && self.tutorial.active) { self.tutorial.onRotate(dir); return false; }
+        return self.rotate(dir);
+      },
+      onTapPiece: function () {
+        if (self.tutorial && self.tutorial.active) { self.tutorial.onTapPiece(); return; }
+        self.rotate(1);
+      },
+      onDoubleTap: function () {
+        if (self.tutorial && self.tutorial.active) { self.tutorial.onDoubleTap(); return; }
+        self.rotate(1);   // 双击一律顺时针，不区分屏幕左右
+      },
 
       onNavStart: function () {
+        if (self.tutorial && self.tutorial.active) { self.tutorial.onNavStart(); return; }
         self.navTarget = null;
         self.audio.navigate();
       },
-      onNavUpdate: function (col) { self.updateNavTarget(col); },
-      onNavCommit: function (col) { self.commitNav(col); },
-      onNavCancel: function () { self.navTarget = null; },
+      onNavUpdate: function (col) {
+        if (self.tutorial && self.tutorial.active) { self.tutorial.onNavUpdate(col); return; }
+        self.updateNavTarget(col);
+      },
+      onNavCommit: function (col) {
+        if (self.tutorial && self.tutorial.active) { self.tutorial.onNavCommit(col); return; }
+        self.commitNav(col);
+      },
+      onNavCancel: function () {
+        if (self.tutorial && self.tutorial.active) { self.tutorial.onNavCancel(); return; }
+        self.navTarget = null;
+      },
 
-      onChargeStart: function () { self.audio.charge(); },
-      onChargeRelease: function (power) { self.fire(power); },
+      onChargeStart: function () {
+        if (self.tutorial && self.tutorial.active) { self.tutorial.onChargeStart(); return; }
+        self.audio.charge();
+      },
+      onChargeRelease: function (power) {
+        if (self.tutorial && self.tutorial.active) { self.tutorial.onChargeRelease(power); return; }
+        self.fire(power);
+      },
       onChargeCancel: function () { }
-    });
+    }, surface);
     this.gesture.attach();
   };
 
@@ -244,6 +276,7 @@
   };
 
   Game.prototype.togglePause = function () {
+    if (this.tutorial && this.tutorial.active) return;   // 教程期间不允许暂停
     if (this.state === STATE.PLAYING) {
       this.state = STATE.PAUSED;
       this.ui.showPause();
@@ -483,6 +516,7 @@
       this.rotFx.t += dt;
       if (this.rotFx.t >= this.rotFx.dur) this.rotFx = null;
     }
+    if (this.tutorial && this.tutorial.active) this.tutorial.tick(dt);
 
     if (this.state === STATE.CLEARING) { this.stepClearing(dt); return; }
     if (this.state === STATE.NAVIGATING) { this.stepNav(dt); return; }
@@ -492,6 +526,8 @@
     var g = this.gesture.getState();
     // 瞄准中冻结重力：导航与蓄力都需要稳定的参照
     if (g.mode === 'NAVIGATE' || g.mode === 'CHARGE') return;
+    // 新手引导期间冻结重力，让练习方块停在讲解位置
+    if (this.tutorial && this.tutorial.active) return;
 
     var interval = Math.max(70, TZ.CFG.DROP_BASE - this.level * 85);
     this.dropAcc += dt;
@@ -527,7 +563,8 @@
       var g = this.gesture.getState();
       var b = this.board.buffer;
 
-      if (g.mode === 'NAVIGATE' && this.navTarget) {
+      if (g.mode === 'NAVIGATE' && this.navTarget &&
+          (!this.tutorial || !this.tutorial.active || this.tutorial.key() === 'nav')) {
         this.renderer.navigation(this.piece, this.navTarget.x, this.navTarget.rot, this.navTarget.y, b, this.time);
       } else if (this.state === STATE.PLAYING || this.state === STATE.PAUSED) {
         this.renderer.ghost(this.piece, this.board.dropY(this.piece), b);
@@ -569,13 +606,17 @@
       if (this.rotFx) this.renderer.rotationFx(this.piece, this.rotFx, b);
 
       // 皮筋要覆盖在方块之上，才有「兜住方块」的层次感
-      if (g.mode === 'CHARGE') {
+      if (g.mode === 'CHARGE' && (!this.tutorial || !this.tutorial.active || this.tutorial.key() === 'charge')) {
         this.renderer.slingshot(this.piece, g.charge, b, this.board.dropY(this.piece));
       }
     }
 
     this.particles.draw(ctx);
     this.floaters.draw(ctx);
+
+    // 新手引导：在棋盘上绘制「幽灵手指」演示动画（覆盖在最上层）
+    if (this.tutorial && this.tutorial.active) this.tutorial.drawDemo(ctx, this.layout);
+
     ctx.restore();
   };
 

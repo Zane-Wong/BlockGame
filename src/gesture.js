@@ -80,8 +80,14 @@
    *   onDoubleTap()        空白处双击，一律顺时针(+1)，不区分屏幕左右半区
    *   isBusy()             游戏是否处于不可操作状态
    */
-  function Gesture(el, hooks) {
+  /* el      —— 棋盘 canvas：坐标换算基准（hitPiece / getOrigin 都在此坐标系）
+   * surface —— 实际接收事件的捕获层（默认就是棋盘本身）。
+   *           传入更大的容器（如 #app）即可让「棋盘以外的空白区域」也响应手势，
+   *           而坐标仍相对棋盘换算，所有判定逻辑无需改动。 */
+  function Gesture(el, hooks, surface) {
     this.el = el;
+    this.refEl = el;                        // 坐标映射基准固定为棋盘 canvas
+    this.surface = surface || el;           // 接收指针事件的捕获层
     this.h = hooks;
     this.reset();
     this.charge = 0;
@@ -118,20 +124,31 @@
   /* ---------- 事件绑定层（Web） ---------- */
   Gesture.prototype.attach = function () {
     var self = this;
-    var el = this.el;
+    var surface = this.surface;          // 接收事件的元素（可大于棋盘）
+    var ref = this.refEl;                // 坐标换算基准 = 棋盘 canvas
 
+    // 命中按钮 / 链接 / 显式声明 data-gesture-ignore 的元素时，不拦截，
+    // 让它们自己的原生 click 正常触发（如开始/继续/跳过、暂停按钮）。
+    function ignore(e) {
+      var t = e.target;
+      return !!(t && t.closest && t.closest('button, a, [data-gesture-ignore]'));
+    }
+
+    // 坐标始终相对「棋盘 canvas」换算，保证触点在空白区域（HUD/底栏/padding）
+    // 时也能映射成合法的棋盘坐标系：棋盘外的点 → hitPiece 返回 null → 按空白手势处理。
     function pos(e) {
-      var r = el.getBoundingClientRect();
-      var sx = el.width / r.width;      // 处理 DPR 与 CSS 缩放
-      var sy = el.height / r.height;
+      var r = ref.getBoundingClientRect();
+      var sx = ref.width / r.width;      // 处理 DPR 与 CSS 缩放
+      var sy = ref.height / r.height;
       var src = e.touches && e.touches[0] ? e.touches[0] : e;
       return {
-        x: (src.clientX - r.left) * sx / (el._dpr || 1),
-        y: (src.clientY - r.top) * sy / (el._dpr || 1)
+        x: (src.clientX - r.left) * sx / (ref._dpr || 1),
+        y: (src.clientY - r.top) * sy / (ref._dpr || 1)
       };
     }
 
     function down(e) {
+      if (ignore(e)) return;             // 交给按钮等原生控件，不启动手势
       e.preventDefault();
       var p = pos(e);
       self.handleDown(p.x, p.y, Date.now());
@@ -149,19 +166,23 @@
     }
 
     if (global.PointerEvent) {
-      el.addEventListener('pointerdown', function (e) { el.setPointerCapture && el.setPointerCapture(e.pointerId); down(e); });
-      el.addEventListener('pointermove', move);
-      el.addEventListener('pointerup', up);
-      el.addEventListener('pointercancel', up);
+      surface.addEventListener('pointerdown', function (e) {
+        if (ignore(e)) return;
+        try { if (surface.setPointerCapture) surface.setPointerCapture(e.pointerId); } catch (_) { }
+        down(e);
+      });
+      surface.addEventListener('pointermove', move);
+      surface.addEventListener('pointerup', up);
+      surface.addEventListener('pointercancel', up);
     } else {
-      el.addEventListener('touchstart', down, { passive: false });
-      el.addEventListener('touchmove', move, { passive: false });
-      el.addEventListener('touchend', up, { passive: false });
-      el.addEventListener('mousedown', down);
+      surface.addEventListener('touchstart', down, { passive: false });
+      surface.addEventListener('touchmove', move, { passive: false });
+      surface.addEventListener('touchend', up, { passive: false });
+      surface.addEventListener('mousedown', down);
       global.addEventListener('mousemove', move);
       global.addEventListener('mouseup', up);
     }
-    el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    surface.addEventListener('contextmenu', function (e) { e.preventDefault(); });
   };
 
   /* ---------- 判定逻辑层（可移植） ---------- */
