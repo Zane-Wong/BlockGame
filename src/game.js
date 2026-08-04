@@ -62,6 +62,7 @@
     this.launch = null;
     this.clearInfo = null;
     this.time = 0;
+    this.rotFx = null;                  // 旋转方向动效状态
 
     this.setupGesture();
     this.resize();
@@ -108,12 +109,39 @@
   /* ---------- 手势接线 ---------- */
   Game.prototype.setupGesture = function () {
     var self = this;
+
+    /* 活动方块占据的列区间（绝对列）。cells() 返回的坐标已含 piece.x，
+     * 千万不要再叠加一次，否则中心会整体右偏一个 piece.x 的距离。 */
+    function pieceSpanCols() {
+      var cells = self.piece.cells();
+      var min = cells[0][0], max = cells[0][0];
+      for (var i = 1; i < cells.length; i++) {
+        if (cells[i][0] < min) min = cells[i][0];
+        if (cells[i][0] > max) max = cells[i][0];
+      }
+      return { min: min, max: max };
+    }
+
     this.gesture = new TZ.Gesture(this.canvas, {
       isBusy: function () {
         return self.state !== STATE.PLAYING;
       },
       getCell: function () { return self.layout.cell; },
       getOrigin: function () { return { x: self.layout.x, y: self.layout.y }; },
+
+      getPieceCol: function () {
+        if (!self.piece) return 0;
+        var s = pieceSpanCols();
+        return Math.round((s.min + s.max) / 2);
+      },
+
+      /* 方块几何中心轴线的像素 X。偶数宽方块（I/O）的轴线落在格边界上，
+       * 所以用 (min + max + 1) / 2 而不是格中心，判定左右半区才不会偏。 */
+      getPieceCenterX: function () {
+        if (!self.piece) return null;
+        var s = pieceSpanCols();
+        return self.layout.x + (s.min + s.max + 1) / 2 * self.layout.cell;
+      },
 
       hitPiece: function (px, py) {
         if (!self.piece) return null;
@@ -136,6 +164,7 @@
       onMove: function (dir) { return self.move(dir); },
       onRotate: function (dir) { return self.rotate(dir); },
       onTapPiece: function () { self.rotate(1); },
+      onDoubleTap: function () { self.rotate(1); },   // 双击一律顺时针，不区分屏幕左右
 
       onNavStart: function () {
         self.navTarget = null;
@@ -180,6 +209,7 @@
     this.score = 0; this.lines = 0; this.level = 0; this.combo = -1;
     this.dropAcc = 0; this.lockTimer = 0; this.lockResets = 0; this.grounded = false;
     this.navTarget = null; this.navQueue = null; this.launch = null; this.clearInfo = null;
+    this.rotFx = null;
     this.particles.clear(); this.floaters.clear();
     this.audio.ensure();
     this.state = STATE.PLAYING;
@@ -238,6 +268,7 @@
     if (!r) return false;
     this.piece.rot = r.rot; this.piece.x = r.x; this.piece.y = r.y;
     this.audio.rotate();
+    this.rotFx = { dir: dir, t: 0, dur: 300, color: this.piece.color };  // 触发旋转方向动效
     this.touchLockReset();
     if (r.kickIndex > 0) {
       // 踢墙成功时给一点视觉反馈
@@ -447,6 +478,10 @@
     this.particles.update();
     this.shake.update();
     this.floaters.update();
+    if (this.rotFx) {
+      this.rotFx.t += dt;
+      if (this.rotFx.t >= this.rotFx.dur) this.rotFx = null;
+    }
 
     if (this.state === STATE.CLEARING) { this.stepClearing(dt); return; }
     if (this.state === STATE.NAVIGATING) { this.stepNav(dt); return; }
@@ -498,7 +533,36 @@
       }
 
       var glow = g.mode === 'NAVIGATE' ? 0.55 : (g.mode === 'CHARGE' ? 0.3 + g.charge * 0.6 : 0);
-      this.renderer.piece(this.piece, b, { glow: glow || undefined });
+
+      // 方块几何中心（用于旋转弹跳缩放与方向箭头）
+      var cs = this.piece.cells();
+      var mnx = 99, mxx = -99, mny = 99, mxy = -99;
+      for (var ci = 0; ci < cs.length; ci++) {
+        if (cs[ci][0] < mnx) mnx = cs[ci][0];
+        if (cs[ci][0] > mxx) mxx = cs[ci][0];
+        if (cs[ci][1] < mny) mny = cs[ci][1];
+        if (cs[ci][1] > mxy) mxy = cs[ci][1];
+      }
+      var pcx = L.x + (mnx + mxx + 1) / 2 * L.cell;
+      var pcy = L.y + ((mny + mxy + 1) / 2 - b) * L.cell;
+
+      // 旋转时让方块轻微「弹一下」，强化旋转动作本身
+      var popS = 1;
+      if (this.rotFx) {
+        var rp = Math.max(0, Math.min(1, this.rotFx.t / this.rotFx.dur));
+        popS = 1 + 0.16 * Math.sin(Math.PI * rp);
+      }
+      ctx.save();
+      if (popS !== 1) {
+        ctx.translate(pcx, pcy);
+        ctx.scale(popS, popS);
+        ctx.translate(-pcx, -pcy);
+      }
+      this.renderer.piece(this.piece, b, { glow: glow || (this.rotFx ? 0.5 : undefined) });
+      ctx.restore();
+
+      // 旋转方向箭头：环绕方块沿旋转方向扫出，明确指示 CW / CCW
+      if (this.rotFx) this.renderer.rotationFx(this.piece, this.rotFx, b);
 
       // 皮筋要覆盖在方块之上，才有「兜住方块」的层次感
       if (g.mode === 'CHARGE') {

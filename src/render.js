@@ -176,6 +176,66 @@
     }
   };
 
+  /* 旋转方向指示：环绕方块画一段沿旋转方向扫出的弧形箭头。
+   * dir = +1 顺时针（屏幕上角度递增）、-1 逆时针；尖端箭头沿运动方向的切线，
+   * 玩家一眼就能看出这次旋转是往哪边转的。配合方块自身的弹跳缩放，双重强化。 */
+  Renderer.prototype.rotationFx = function (piece, fx, buffer) {
+    var ctx = this.ctx, L = this.L;
+    var cells = piece.cells();
+    var minX = 99, maxX = -99, minY = 99, maxY = -99;
+    for (var i = 0; i < cells.length; i++) {
+      var c = cells[i];
+      if (c[0] < minX) minX = c[0];
+      if (c[0] > maxX) maxX = c[0];
+      if (c[1] < minY) minY = c[1];
+      if (c[1] > maxY) maxY = c[1];
+    }
+    var cx = L.x + (minX + maxX + 1) / 2 * L.cell;
+    var cy = L.y + ((minY + maxY + 1) / 2 - buffer) * L.cell;
+    var w = (maxX - minX + 1) * L.cell;
+    var h = (maxY - minY + 1) * L.cell;
+    var baseR = 0.5 * Math.max(w, h) + L.cell * 0.55;
+
+    var p = Math.max(0, Math.min(1, fx.t / fx.dur));
+    var dir = fx.dir >= 0 ? 1 : -1;
+    var alpha = Math.min(1, p * 5) * Math.min(1, (1 - p) * 3.2);   // 快速淡入，末段淡出
+    if (alpha <= 0.02) return;
+    var color = fx.color || piece.color;
+
+    var startA = -Math.PI / 2;
+    var span = Math.PI * 1.55;                                     // 约 280°，留缺口更显「旋转中」
+    var leadA = startA + span * Math.min(1, p * 1.4) * dir;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = Renderer.rgba(color, 0.92 * alpha);
+    ctx.lineWidth = Math.max(2.2, L.cell * 0.16);
+
+    // 主弧：从固定起点沿旋转方向扫出
+    ctx.beginPath();
+    if (dir > 0) ctx.arc(cx, cy, baseR, startA, leadA, false);
+    else ctx.arc(cx, cy, baseR, startA, leadA, true);
+    ctx.stroke();
+
+    // 尖端箭头：沿运动方向切线
+    var tipx = cx + baseR * Math.cos(leadA);
+    var tipy = cy + baseR * Math.sin(leadA);
+    var tx, ty;
+    if (dir > 0) { tx = -Math.sin(leadA); ty = Math.cos(leadA); }
+    else { tx = Math.sin(leadA); ty = -Math.cos(leadA); }
+    var px = -ty, py = tx;                                         // 垂直分量
+    var hl = L.cell * 0.42;
+    ctx.beginPath();
+    ctx.moveTo(tipx, tipy);
+    ctx.lineTo(tipx - tx * hl + px * hl * 0.6, tipy - ty * hl + py * hl * 0.6);
+    ctx.moveTo(tipx, tipy);
+    ctx.lineTo(tipx - tx * hl - px * hl * 0.6, tipy - ty * hl - py * hl * 0.6);
+    ctx.stroke();
+
+    ctx.restore();
+  };
+
   /* 幽灵落点 */
   Renderer.prototype.ghost = function (piece, dropY, buffer) {
     var cells = piece.cells(piece.rot, piece.x, dropY);

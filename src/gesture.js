@@ -17,13 +17,21 @@
  *
  *   按下 ─┬─ 命中活动方块 ─┬─ 停留 200ms 无位移 ──→ NAVIGATE 落点导航
  *         │                ├─ 横向位移超阈值 ────→ MOVE 逐格横移
- *         │                └─ 上滑超阈值 ────────→ ROTATE 旋转（左偏逆时针/右偏顺时针）
+ *         │                ├─ 上滑超阈值 ────────→ ROTATE 旋转（轴线左顺时针/右逆时针）
+ *         │                └─ 快速抬起 ──────────→ 轻点旋转（顺时针一次）
  *         └─ 落在空白处 ───┬─ 停留 200ms 无位移 ──→ CHARGE 蓄力弹射
  *                          ├─ 横向位移超阈值 ────→ MOVE（空白处也可横滑，操作面积更大）
- *                          └─ 上滑超阈值 ────────→ ROTATE
+ *                          ├─ 上滑超阈值 ────────→ ROTATE
+ *                          └─ 300ms 内二次轻点 ──→ 双击旋转（顺时针一次）
  *
  * CHARGE 是「边蓄力边瞄准」的复合态：力度只由按住时长决定，横向滑动仍逐格
  * 带动方块，玩家可以在蓄满的同时把落点挪到想要的列，不必松手重来。
+ *
+ * 空白处单击刻意留空（误触无副作用），双击才旋转：方块越落越低时不用回头去
+ * 瞄准它，随手在空白双击即可转向。
+ *
+ * 上滑旋转：方向由「触点落在方块中心轴线的哪一侧」决定——左半区顺时针、右半区逆时针，
+ * 像用手推转盘一样直觉。双击旋转则一律顺时针(+1)，不区分左右，便于盲操作。
  *
  * 判定逻辑与事件绑定解耦：handleDown/handleMove/handleUp 是纯逻辑，
  * 迁移到小程序时只需替换 attach() 里的事件监听层。
@@ -40,19 +48,23 @@
     ROT_REPEAT: 1.7,     // 连续旋转所需的「额外」位移，远高于首次，避免一滑连转
     ROT_BACK: 1.9,       // 回拉反向旋转阈值，最保守，防止抖动来回翻转
     ROT_COOLDOWN: 260,   // 两次旋转之间的最小间隔（ms），硬性限制触发频次
-    ROT_BIAS_SLOPE: 0.35,// 转向判定用「滑动角度」dx/ady，比绝对像素更稳定
+    ROT_BIAS_SLOPE: 0.35,// 仅当 getPieceCenterX 不可用时（无方块）降级用作「滑动角度」dx/ady 判定
     ROT_LOCK: 1.35,      // 旋转需纵向分量超横向该倍数（收紧，斜滑不再误判为旋转）
     MOVE_LOCK: 1.0,      // 横移只需横向占优即可（放宽，避免与旋转之间出现死区）
     CHARGE_MS: 850,      // 蓄满所需时长
     CHARGE_MOVE: 1.15,   // 蓄力期间横移步长（格）。手指处于按压状态抖动更大，
                          // 比常规横移略钝一点，既能瞄准又不会误触
     TAP_MS: 180,         // 轻点判定
-    TAP_DIST: 10
+    TAP_DIST: 10,
+    DTAP_MS: 300,        // 双击间隔上限。比系统 500ms 短，避免「两次独立轻点」被误连成双击
+    DTAP_DIST: 34        // 两次点击的落点容差（像素），略大于一格，允许手指自然漂移
   };
 
   /* hooks 需要提供：
    *   getCell()    -> 格子边长（像素）
    *   getOrigin()  -> {x, y} 棋盘左上角在 canvas 内的坐标
+   *   getPieceCol() -> 活动方块的「视觉中心列」（用于导航起始列，避免触点偏移导致方向偏差）
+   *   getPieceCenterX() -> 活动方块中心轴线的像素 X（判定旋转方向的左右半区），无方块返回 null
    *   hitPiece(cx, cy) -> 触点是否命中活动方块，命中返回 {gx, gy}，否则 null
    *   onMove(dir)          横移一格
    *   onRotate(dir)        旋转，dir=1 顺时针 / -1 逆时针
@@ -64,6 +76,7 @@
    *   onChargeRelease(power)  power 为 0~1
    *   onChargeCancel()
    *   onTapPiece()         轻点方块
+   *   onDoubleTap()        空白处双击，一律顺时针(+1)，不区分屏幕左右半区
    *   isBusy()             游戏是否处于不可操作状态
    */
   function Gesture(el, hooks) {
@@ -72,6 +85,11 @@
     this.reset();
     this.charge = 0;
     this.charging = false;
+    // 双击记录必须活过 reset()：reset 在每次按下时调用，
+    // 若把它清掉，第二次点击就永远读不到第一次的记录。
+    this.lastTapTime = 0;
+    this.lastTapX = 0;
+    this.lastTapY = 0;
   }
 
   Gesture.prototype.reset = function () {
@@ -165,7 +183,9 @@
       if (dx > P.HOLD_TOL || dy > P.HOLD_TOL) return;
       if (self.onPiece) {
         self.mode = 'NAVIGATE';
-        self.navCol = self.colAt(self.lastX);
+        // 用方块实际中心列做导航起点，不依赖触点落在哪一格。
+        // 否则宽方块（I/O）按在不同格子上会差 1~3 列，用户感觉「偏方向」。
+        self.navCol = self.h.getPieceCol ? self.h.getPieceCol() : self.colAt(self.lastX);
         self.h.onNavStart();
         self.h.onNavUpdate(self.navCol);
       } else {
@@ -184,6 +204,24 @@
     return Math.round((x - origin.x) / cell - this.grabOffset);
   };
 
+  /* 判定旋转方向：以方块中心轴线把屏幕切成左右两半。
+   *
+   *   左半区上滑 → 顺时针(+1)    右半区上滑 → 逆时针(-1)
+   *
+   * 这是「推转盘」的物理直觉：在左侧往上推，盘子顺时针转。
+   * 相比旧的滑动角度判定（dx/ady），落点是玩家按下手指那一刻就确定的，
+   * 不会因滑动过程中的手指漂移而翻转，方向可预测得多。
+   *
+   * 拿不到轴线时（方块已锁定等）退回旧的斜滑角度判定。
+   */
+  Gesture.prototype.rotDirAt = function (x, dx, ady) {
+    var axis = this.h.getPieceCenterX ? this.h.getPieceCenterX() : null;
+    if (axis == null) {
+      return (dx / ady) < -P.ROT_BIAS_SLOPE ? -1 : 1;
+    }
+    return x < axis ? 1 : -1;
+  };
+
   Gesture.prototype.handleMove = function (x, y, t) {
     if (!this.active) return;
     this.lastX = x; this.lastY = y;
@@ -200,7 +238,7 @@
         clearTimeout(this.holdTimer);
         if (this.onPiece) {
           this.mode = 'NAVIGATE';
-          this.navCol = this.colAt(x);
+          this.navCol = this.h.getPieceCol ? this.h.getPieceCol() : this.colAt(x);
           this.h.onNavStart();
           this.h.onNavUpdate(this.navCol);
         } else {
@@ -216,9 +254,7 @@
       if (dy < 0 && ady > cell * P.ROT_RATIO && ady > adx * P.ROT_LOCK) {
         this.mode = 'ROTATE';
         clearTimeout(this.holdTimer);
-        // 用滑动角度而非绝对像素判定转向：触发瞬间横向分量尚未展开完，
-        // 用比值才能稳定反映玩家真实的斜滑意图。
-        this.rotDir = (dx / ady) < -P.ROT_BIAS_SLOPE ? -1 : 1;
+        this.rotDir = this.rotDirAt(this.startX, dx, ady);
         this.h.onRotate(this.rotDir);
         this.anchorY = y;
         this.lastRotTime = t;
@@ -310,8 +346,28 @@
     } else if (mode === 'CHARGE') {
       this.h.onChargeRelease(this.charge);
     } else if (mode === 'PENDING' && dur < P.TAP_MS && dist < P.TAP_DIST) {
-      // 轻点方块 = 快速顺时针旋转
-      if (this.onPiece) this.h.onTapPiece();
+      if (this.onPiece) {
+        // 轻点方块 = 快速顺时针旋转（单击即生效，无需等双击判定）
+        this.h.onTapPiece();
+        this.lastTapTime = 0;                 // 方块上的点击不参与空白双击计数
+      } else {
+        // 空白处：单击不做事，双击才旋转。
+        // 这样既保留了「误触空白无副作用」，又给了不用瞄准方块的旋转入口。
+        var gap = t - this.lastTapTime;
+        var near = Math.abs(this.startX - this.lastTapX) + Math.abs(this.startY - this.lastTapY);
+        if (this.lastTapTime && gap < P.DTAP_MS && near < P.DTAP_DIST) {
+          // 双击旋转：不区分屏幕左右半区，一律顺时针(+1)，简化记忆
+          this.h.onDoubleTap ? this.h.onDoubleTap(1) : this.h.onRotate(1);
+          this.lastTapTime = 0;               // 立即清零，防止三击被判成两组双击
+        } else {
+          this.lastTapTime = t;
+          this.lastTapX = this.startX;
+          this.lastTapY = this.startY;
+        }
+      }
+    } else {
+      // 发生了滑动/长按等实质操作，中断双击链，避免与下一次轻点意外配对
+      this.lastTapTime = 0;
     }
 
     this.active = false;
