@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>魔方坠落 · 联机对战房间流程原型</title>
+<style>
+  :root{
+    --bg0:#0c0f1a; --bg1:#141a2c; --panel:#1b2236; --panel2:#222b45;
+    --line:#2c3656; --txt:#e8ecf8; --sub:#8b95b5; --gold:#f0c040;
+    --red:#e24b4a; --blue:#4a8fe2; --green:#48c78a; --purple:#a05bd6;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; height:100%;}
+  body{
+    background:radial-gradient(1200px 700px at 50% -10%, #1a2138, var(--bg0));
+    color:var(--txt); font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    display:flex; align-items:center; justify-content:center; padding:18px;
+  }
+  .phone{
+    width:430px; max-width:100%; height:860px; max-height:96vh; position:relative;
+    background:linear-gradient(180deg, var(--bg1), var(--bg0));
+    border:1px solid var(--line); border-radius:22px; overflow:hidden;
+    box-shadow:0 30px 80px rgba(0,0,0,.5);
+    display:flex; flex-direction:column;
+  }
+  .screen{
+    position:absolute; inset:0; padding:22px; display:none; flex-direction:column;
+    overflow-y:auto;
+  }
+  .screen.on{display:flex;}
+  h1{font-size:24px; margin:6px 0 2px; letter-spacing:.5px;}
+  h2{font-size:19px; margin:0 0 14px;}
+  .sub{color:var(--sub); font-size:13px; line-height:1.6;}
+  .brand{
+    font-weight:800; background:linear-gradient(90deg,var(--gold),#ff8a5b);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:16px; margin-top:14px;}
+  .btn{
+    border:none; border-radius:12px; padding:13px 16px; font-size:15px; font-weight:700;
+    cursor:pointer; color:#fff; background:var(--panel2); transition:.15s; width:100%;
+  }
+  .btn:active{transform:scale(.97);}
+  .btn.primary{background:linear-gradient(90deg,#ff9a4d,#ff5e7e);}
+  .btn.gold{background:linear-gradient(90deg,var(--gold),#e8a93a); color:#1a1405;}
+  .btn.ghost{background:transparent; border:1px solid var(--line); color:var(--txt);}
+  .btn:disabled{opacity:.4; cursor:not-allowed;}
+  .row{display:flex; align-items:center; justify-content:space-between; gap:12px;}
+  .lab{color:var(--sub); font-size:14px;}
+  .stepper{display:flex; align-items:center; gap:14px;}
+  .stepper button{width:42px; height:42px; border-radius:12px; border:1px solid var(--line); background:var(--panel2); color:#fff; font-size:22px; cursor:pointer;}
+  .stepper .val{font-size:26px; font-weight:800; min-width:34px; text-align:center;}
+  .code{font-family:ui-monospace,Menlo,monospace; font-size:22px; font-weight:800; letter-spacing:3px; color:var(--gold);}
+  .share{display:flex; gap:8px; margin-top:10px;}
+  .share input{flex:1; background:var(--bg0); border:1px solid var(--line); color:var(--sub); border-radius:10px; padding:10px; font-size:12px;}
+  .share button{width:auto; padding:10px 14px; font-size:13px;}
+
+  /* 头像 / 账号初始化 */
+  .avatars{display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-top:12px;}
+  .av{aspect-ratio:1; display:flex; align-items:center; justify-content:center; font-size:24px; border-radius:50%; border:2px solid var(--line); cursor:pointer; background:var(--bg0);}
+  .av.sel{border-color:var(--gold); box-shadow:0 0 0 3px rgba(240,192,64,.25);}
+  input.name{flex:1; background:var(--bg0); border:1px solid var(--line); color:#fff; border-radius:10px; padding:12px; font-size:15px;}
+  .fp{margin-top:14px; font-size:11px; color:var(--sub); word-break:break-all;}
+
+  /* 座位网格 */
+  .seat-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:8px;}
+  .seat{
+    aspect-ratio:1; border-radius:14px; border:2px dashed var(--line); background:var(--bg0);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; cursor:pointer; position:relative; transition:.15s;
+  }
+  .seat:hover{border-color:var(--sub);}
+  .seat .num{font-size:12px; color:var(--sub);}
+  .seat .ava{font-size:30px;}
+  .seat .nm{font-size:12px; max-width:90%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .seat.occupied{border-style:solid; border-color:var(--line); background:var(--panel);}
+  .seat.mine{border-color:var(--gold); box-shadow:0 0 0 3px rgba(240,192,64,.22);}
+  .seat .tag{position:absolute; top:6px; right:8px; font-size:10px; color:var(--sub);}
+  .seat.mine .tag{color:var(--gold);}
+  .bar{display:flex; gap:10px; margin-top:14px;}
+  .bar .btn{flex:1;}
+
+  /* 对战区 */
+  #screen-battle{padding:0;}
+  .hud{display:flex; gap:8px; padding:10px 12px; background:rgba(20,26,44,.9); border-bottom:1px solid var(--line); flex-wrap:wrap; align-items:center;}
+  .chip{font-size:12px; background:var(--panel); border:1px solid var(--line); padding:5px 9px; border-radius:20px; white-space:nowrap;}
+  .chip b{color:var(--gold);}
+  .arena{flex:1; display:flex; gap:12px; padding:12px; overflow:hidden; align-items:center; justify-content:center;}
+  .arena.split2{flex-direction:row;}
+  .arena.splitMulti{flex-direction:row; align-items:stretch;}
+  .board{background:#0a0d18; border:2px solid var(--line); border-radius:12px; padding:3px; position:relative; flex:0 0 auto; display:flex; flex-direction:column;}
+  .board.main{flex:1 1 auto; max-width:50%; height:78vh;}
+  .board .bhead{display:flex; justify-content:space-between; padding:2px 4px 4px; font-size:11px; color:var(--sub);}
+  .board .bname .me{color:var(--gold);}
+  .board .grid{position:relative; flex:1; display:grid; grid-template-rows:repeat(var(--rows),1fr); gap:1px; background:#0a0d18;}
+  .board .grid > .cell{background:#111726; border-radius:1px;}
+  .board.main .grid{grid-template-columns:repeat(10,1fr);}
+  .board.thumb .grid{grid-template-columns:repeat(10,1fr);}
+  .board.thumb{flex:0 0 auto; height:var(--tz,200px);}
+  .cell.cured{background:repeating-linear-gradient(45deg,#3a2a2a,#3a2a2a 4px,#2a1e1e 4px,#2a1e1e 8px) !important; box-shadow:inset 0 0 0 1px rgba(226,75,74,.5);}
+  .cureline{position:absolute; left:2px; right:2px; height:0; border-top:2px solid var(--gold); box-shadow:0 0 8px rgba(240,192,64,.7); pointer-events:none; transition:top .25s;}
+  .cureline.on{height:2px;}
+  .seatno{position:absolute; top:5px; left:7px; font-size:12px; font-weight:800; color:var(--sub); background:rgba(0,0,0,.4); border-radius:6px; padding:0 6px; z-index:3;}
+  .board.attacked{border-color:var(--gold); box-shadow:0 0 0 3px rgba(240,192,64,.4);}
+  .board.out{opacity:.45; filter:grayscale(.6);}
+  .badge{position:absolute; top:6px; right:8px; background:var(--red); color:#fff; font-size:10px; font-weight:800; padding:2px 7px; border-radius:8px; display:none; z-index:4;}
+  .board.out .badge{display:block;}
+  .target-tag{position:absolute; bottom:6px; right:8px; font-size:10px; color:var(--gold); background:rgba(0,0,0,.5); padding:1px 6px; border-radius:8px; z-index:4; display:none;}
+  .board.attacked .target-tag{display:block;}
+  .vs{font-size:24px; font-weight:800; color:var(--sub); align-self:center;}
+  .rail{flex:1; display:grid; grid-template-columns:repeat(2,max-content); gap:10px; align-content:start; max-height:80vh; overflow:auto; justify-content:center;}
+  .controls{padding:10px 12px; background:rgba(20,26,44,.92); border-top:1px solid var(--line); display:flex; gap:8px; flex-wrap:wrap;}
+  .controls .btn{flex:1; min-width:120px;}
+
+  /* 结算 */
+  .overlay{position:absolute; inset:0; background:rgba(8,10,18,.82); backdrop-filter:blur(6px); display:none; flex-direction:column; align-items:center; justify-content:center; z-index:20; padding:24px; text-align:center;}
+  .overlay.on{display:flex;}
+  .overlay h2{font-size:34px; margin:0 0 6px;}
+  .overlay.win h2{color:var(--gold);}
+  .overlay.lose h2{color:var(--red);}
+  .overlay p{color:var(--sub); margin:2px 0 18px;}
+  .dev{position:absolute; bottom:8px; left:8px; font-size:10px; color:var(--sub); opacity:.5; cursor:pointer; z-index:30;}
+</style>
+</head>
+<body>
+<div class="phone">
+
+  <!-- ① 新玩家初始化 -->
+  <section class="screen" id="screen-init">
+    <h1>欢迎来到 <span class="brand">魔方坠落</span></h1>
+    <div class="sub">首次进入，请设置你的玩家形象（根据你的浏览器已生成唯一身份）。</div>
+    <div class="panel">
+      <div class="row"><span class="lab">昵称</span></div>
+      <div style="display:flex; gap:10px; margin-top:8px;">
+        <input class="name" id="initName" maxlength="8" placeholder="输入昵称">
+      </div>
+      <div class="row" style="margin-top:14px;"><span class="lab">选择一个头像</span></div>
+      <div class="avatars" id="avatars"></div>
+    </div>
+    <button class="btn primary" id="saveProfile" style="margin-top:16px;">保存并进入</button>
+    <div class="fp" id="fpText"></div>
+  </section>
+
+  <!-- ② 首页 -->
+  <section class="screen" id="screen-home">
+    <h1><span class="brand">魔方坠落</span> · 联机对战</h1>
+    <div class="sub">独自为战（FFA）。按座位号成环攻击下一号，最后存活者胜。</div>
+    <div class="panel">
+      <div class="row"><span class="lab">当前账号</span><span id="curName" style="font-weight:700;"></span></div>
+      <div class="row" style="margin-top:6px;"><span class="lab">身份指纹</span><span id="curFp" style="font-size:11px;color:var(--sub);"></span></div>
+    </div>
+    <button class="btn primary" id="goCreate" style="margin-top:16px;">创建房间</button>
+    <button class="btn ghost" id="goJoin" style="margin-top:10px;">加入房间</button>
+  </section>
+
+  <!-- ③ 选人数（创建） -->
+  <section class="screen" id="screen-count">
+    <h2>创建房间 · 选择人数</h2>
+    <div class="panel">
+      <div class="row"><span class="lab">房间人数</span>
+        <div class="stepper">
+          <button id="cMinus">−</button>
+          <span class="val" id="cCount">4</span>
+          <button id="cPlus">+</button>
+        </div>
+      </div>
+      <div class="sub" style="margin-top:10px;">支持 2–9 人。确定后生成房间码与座位。</div>
+    </div>
+    <button class="btn gold" id="doCreate" style="margin-top:16px;">创建房间</button>
+    <button class="btn ghost" id="cBack" style="margin-top:10px;">返回</button>
+  </section>
+
+  <!-- ④ 加入房间（输码） -->
+  <section class="screen" id="screen-join">
+    <h2>加入房间</h2>
+    <div class="panel">
+      <div class="row"><span class="lab">房间码</span></div>
+      <input class="name" id="joinCode" placeholder="例如 XZ-4827" style="margin-top:8px; text-transform:uppercase;">
+    </div>
+    <button class="btn primary" id="doJoin" style="margin-top:16px;">进入房间</button>
+    <button class="btn ghost" id="jBack" style="margin-top:10px;">返回</button>
+  </section>
+
+  <!-- ⑤ 房间（房间码 + 座位网格） -->
+  <section class="screen" id="screen-room">
+    <div class="row">
+      <h2 style="margin:0;">房间</h2>
+      <span class="code" id="roomCode">XZ-0000</span>
+    </div>
+    <div class="sub">点击空座位坐下。其他人只能选其它位置。所有人落座后自动排好序号、可开始对战。</div>
+    <div class="panel">
+      <div class="row"><span class="lab">分享链接（点开即加入）</span></div>
+      <div class="share">
+        <input id="shareLink" readonly>
+        <button class="btn" id="copyLink">复制</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="seat-grid" id="seatGrid"></div>
+      <div class="bar">
+        <button class="btn ghost" id="botOne">模拟一位好友加入</button>
+        <button class="btn ghost" id="botFill">机器人填满</button>
+      </div>
+    </div>
+    <button class="btn gold" id="startBtn" style="margin-top:6px;" disabled>开始对战（等待满座…）</button>
+    <button class="btn ghost" id="roomBack" style="margin-top:8px;">退出房间</button>
+  </section>
+
+  <!-- ⑥ 对战 -->
+  <section class="screen" id="screen-battle">
+    <div class="hud">
+      <span class="chip">存活 <b id="hAlive">1</b></span>
+      <span class="chip">我的排名 <b id="hRank">1/1</b></span>
+      <span class="chip">我的固化 <b id="hSolid">0/18</b></span>
+      <span class="chip" id="hTarget">你攻击 → —</span>
+    </div>
+    <div class="arena" id="arena"></div>
+    <div class="controls">
+      <button class="btn" id="clear1">我消 1 行（攻+自救）</button>
+      <button class="btn gold" id="clear2">我消 2 行 · 重击</button>
+      <button class="btn ghost" id="autoBtn">▶ 自动演示</button>
+      <button class="btn ghost" id="backHome">退出</button>
+    </div>
+    <div class="overlay" id="result">
+      <h2 id="resultTitle">VICTORY</h2>
+      <p id="resultDesc"></p>
+      <button class="btn primary" id="resultBtn">返回首页</button>
+    </div>
+  </section>
+
+  <div class="dev" id="devReset">清空存档(模拟新玩家)</div>
+</div>
+
+<script>
+/* ============ 浏览器指纹 + 账号（原型模拟） ============ */
+const FP_KEY='tz_fp', PROF_KEY='tz_profile';
+function getFP(){
+  let fp=localStorage.getItem(FP_KEY);
+  if(!fp){ fp='fp_'+Math.random().toString(36).slice(2)+Date.now().toString(36);
+    localStorage.setItem(FP_KEY, fp); }
+  return fp;
+}
+function getProfile(){ const r=localStorage.getItem(PROF_KEY); return r?JSON.parse(r):null; }
+function saveProfile(p){ localStorage.setItem(PROF_KEY, JSON.stringify(p)); }
+
+const AVATARS=['🦊','🐼','🐯','🦁','🐸','🐵','🐧','🦉','🐙','🐲','🦄','🐱'];
+const BOT_POOL=[
+  {name:'小艾',avatar:'🐼'}, {name:'阿K',avatar:'🐯'}, {name:'莉莉',avatar:'🦁'},
+  {name:'大壮',avatar:'🐸'}, {name:'Momo',avatar:'🐵'}, {name:'可乐',avatar:'🐧'},
+  {name:'夜枭',avatar:'🦉'}, {name:'章鱼',avatar:'🐙'}, {name:'龙哥',avatar:'🐲'}
+];
+
+let ME=null; // {name, avatar}
+const G={ count:4, room:'', seats:[], mySeat:-1, auto:false, timer:null, over:false, players:[] };
+
+/* ============ 屏幕切换 ============ */
+function show(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on'));
+  document.getElementById(id).classList.add('on');
+}
+function newRoomCode(){
+  const n=Math.floor(1000+Math.random()*9000);
+  return 'XZ-'+n;
+}
+
+/* ============ ① 初始化 ============ */
+function renderInit(){
+  const av=document.getElementById('avatars'); av.innerHTML='';
+  AVATARS.forEach((a,i)=>{
+    const d=document.createElement('div'); d.className='av'+(i===0?' sel':''); d.textContent=a; d.dataset.a=a;
+    d.onclick=()=>{ av.querySelectorAll('.av').forEach(x=>x.classList.remove('sel')); d.classList.add('sel'); };
+    av.appendChild(d);
+  });
+  document.getElementById('fpText').textContent='浏览器身份指纹: '+getFP();
+}
+document.getElementById('saveProfile').onclick=()=>{
+  const name=(document.getElementById('initName').value||'玩家').trim().slice(0,8);
+  const av=document.querySelector('#avatars .av.sel').dataset.a;
+  ME={name, avatar:av}; saveProfile(ME);
+  enterHome();
+};
+
+/* ============ ② 首页 ============ */
+function enterHome(){
+  document.getElementById('curName').textContent=(ME?ME.name:'—')+(ME?' '+ME.avatar:'');
+  document.getElementById('curFp').textContent=getFP().slice(0,14)+'…';
+  show('screen-home');
+}
+document.getElementById('goCreate').onclick=()=>{ G.count=4; document.getElementById('cCount').textContent=4; show('screen-count'); };
+document.getElementById('goJoin').onclick=()=>{ document.getElementById('joinCode').value=''; show('screen-join'); };
+
+/* ============ ③ 选人数 ============ */
+function setC(n){ G.count=Math.max(2,Math.min(9,n)); document.getElementById('cCount').textContent=G.count; }
+document.getElementById('cMinus').onclick=()=>setC(G.count-1);
+document.getElementById('cPlus').onclick=()=>setC(G.count+1);
+document.getElementById('doCreate').onclick=()=>{ G.room=newRoomCode(); openRoom(); };
+document.getElementById('cBack').onclick=()=>show('screen-home');
+
+/* ============ ④ 加入 ============ */
+document.getElementById('doJoin').onclick=()=>{
+  const code=(document.getElementById('joinCode').value||'').trim().toUpperCase();
+  if(!code){ alert('请输入房间码'); return; }
+  G.room=code; openRoom();
+};
+document.getElementById('jBack').onclick=()=>show('screen-home');
+
+/* ============ ⑤ 房间座位 ============ */
+function makeSeatPlayer(isMe, idx){
+  return { seat:idx, isMe, name: isMe?(ME?ME.name:'你'):'', avatar: isMe?(ME?ME.avatar:'🦊'):'',
+           rows:18, cols:10, solid:0, lines:0, alive:true, cells:genCells(18,10),
+           rootEl:null, cellEls:[], cureEl:null, scoreEl:null };
+}
+function openRoom(){
+  G.seats=new Array(G.count).fill(null);
+  G.mySeat=-1;
+  renderRoom();
+  show('screen-room');
+}
+function renderRoom(){
+  document.getElementById('roomCode').textContent=G.room;
+  const link=location.origin+location.pathname+'?room='+encodeURIComponent(G.room);
+  document.getElementById('shareLink').value=link;
+  const grid=document.getElementById('seatGrid'); grid.innerHTML='';
+  for(let i=0;i<G.count;i++){
+    const s=G.seats[i];
+    const seat=document.createElement('div');
+    seat.className='seat'+(s?' occupied':'')+(s&&s.isMe?' mine':'');
+    if(s){
+      seat.innerHTML=`<span class="tag">${s.isMe?'你':'#'+(i+1)}</span><span class="ava">${s.avatar}</span><span class="nm">${s.name}</span>`;
+    } else {
+      seat.innerHTML=`<span class="num">空位 #${i+1}</span>`;
+    }
+    seat.onclick=()=>clickSeat(i);
+    grid.appendChild(seat);
+  }
+  const full=G.seats.every(s=>s);
+  const sb=document.getElementById('startBtn');
+  sb.disabled=!full;
+  sb.textContent= full ? '开始对战' : `开始对战（${G.seats.filter(s=>s).length}/${G.count} 已落座）`;
+}
+function clickSeat(i){
+  if(G.seats[i]) return; // 已占
+  // 若我已坐下，先撤掉旧位
+  if(G.mySeat>=0) G.seats[G.mySeat]=null;
+  G.seats[i]=makeSeatPlayer(true, i); G.mySeat=i;
+  renderRoom();
+}
+document.getElementById('botOne').onclick=()=>{
+  const empty=[]; for(let i=0;i<G.count;i++) if(!G.seats[i]) empty.push(i);
+  if(!empty.length) return;
+  const idx=empty[Math.floor(Math.random()*empty.length)];
+  const b=BOT_POOL[(G.room.length+idx)%BOT_POOL.length];
+  G.seats[idx]=Object.assign(makeSeatPlayer(false,idx), {name:b.name, avatar:b.avatar});
+  renderRoom();
+};
+document.getElementById('botFill').onclick=()=>{
+  let bn=0;
+  for(let i=0;i<G.count;i++){
+    if(!G.seats[i]){ const b=BOT_POOL[bn%BOT_POOL.length]; bn++;
+      G.seats[i]=Object.assign(makeSeatPlayer(false,i), {name:b.name, avatar:b.avatar}); }
+  }
+  renderRoom();
+};
+document.getElementById('copyLink').onclick=()=>{
+  const inp=document.getElementById('shareLink'); inp.select();
+  navigator.clipboard && navigator.clipboard.writeText(inp.value);
+  document.getElementById('copyLink').textContent='已复制';
+  setTimeout(()=>document.getElementById('copyLink').textContent='复制',1200);
+};
+document.getElementById('startBtn').onclick=()=>{ if(G.seats.every(s=>s)) startBattle(); };
+document.getElementById('roomBack').onclick=()=>show('screen-home');
+
+/* ============ ⑥ 对战（复用环形攻击 + 固化块） ============ */
+function genCells(rows,cols){
+  const out=[]; for(let r=0;r<rows;r++){ const row=[]; for(let c=0;c<cols;c++) row.push(Math.random()<0.18?COLORS[Math.floor(Math.random()*COLORS.length)]:null); out.push(row); } return out;
+}
+const COLORS=['#e24b4a','#4a8fe2','#48c78a','#f0c040','#a05bd6','#ff9a4d'];
+
+function aliveSeats(){ const a=[]; for(let i=0;i<G.count;i++) if(G.seats[i]&&G.seats[i].alive) a.push(i); return a; }
+function nextSeat(s){
+  const alive=aliveSeats(); if(alive.length<=1) return -1;
+  for(let k=1;k<=G.count;k++){ const c=(s+k)%G.count; if(G.seats[c]&&G.seats[c].alive) return c; }
+  return -1;
+}
+function startBattle(){
+  G.players=G.seats.slice();          // 座位顺序即攻击环
+  G.over=false;
+  buildArena();
+  updateAll();
+  show('screen-battle');
+}
+function buildArena(){
+  const arena=document.getElementById('arena'); arena.innerHTML=''; arena.className='arena';
+  const players=G.players;
+  if(G.count===2){
+    arena.classList.add('split2');
+    arena.append(createBoardEl(players[0],true), mkVs(), createBoardEl(players[1],true));
+  } else {
+    arena.classList.add('splitMulti');
+    const main=createBoardEl(players[G.mySeat],true);
+    const rail=document.createElement('div'); rail.className='rail';
+    players.forEach((p,i)=>{ if(i!==G.mySeat) rail.appendChild(createBoardEl(p,false)); });
+    arena.append(main, rail);
+  }
+}
+function mkVs(){ const v=document.createElement('div'); v.className='vs'; v.textContent='VS'; return v; }
+function createBoardEl(p, main){
+  const root=document.createElement('div');
+  root.className='board '+(main?'main':'thumb');
+  const head=document.createElement('div'); head.className='bhead';
+  const nm=document.createElement('span'); nm.className='bname';
+  nm.innerHTML=(p.isMe?'<span class="me">你</span>':(p.avatar+' '+p.name));
+  const sc=document.createElement('span'); sc.className='bscore';
+  head.append(nm, sc);
+  const grid=document.createElement('div'); grid.className='grid'; grid.style.setProperty('--rows', p.rows);
+  const cellEls=[];
+  for(let r=0;r<p.rows;r++){ const row=[]; for(let c=0;c<p.cols;c++){ const cell=document.createElement('div'); cell.className='cell'; const col=p.cells[r][c]; if(col) cell.style.background=col; grid.appendChild(cell); row.push(cell); } cellEls.push(row); }
+  const cure=document.createElement('div'); cure.className='cureline';
+  const seatno=document.createElement('div'); seatno.className='seatno'; seatno.textContent='#'+(p.seat+1);
+  const badge=document.createElement('div'); badge.className='badge'; badge.textContent='OUT';
+  const ttag=document.createElement('div'); ttag.className='target-tag'; ttag.textContent='你攻击 →';
+  grid.append(cure);
+  root.append(seatno, head, grid, badge, ttag);
+  p.rootEl=root; p.cellEls=cellEls; p.cureEl=cure; p.scoreEl=sc;
+  return root;
+}
+function myClear(rows){
+  if(G.over) return;
+  const me=G.players[G.mySeat]; if(!me||!me.alive) return;
+  const tIdx=nextSeat(G.mySeat);
+  if(tIdx>=0){ const t=G.players[tIdx]; t.solid=Math.min(t.rows, t.solid+rows); if(t.solid>=t.rows) t.alive=false; }
+  me.solid=Math.max(0, me.solid-1); me.lines+=rows;
+  updateAll();
+}
+function botTick(){
+  if(G.over) return;
+  const bots=G.players.filter(p=>p.alive && !p.isMe); if(!bots.length) return;
+  const b=bots[Math.floor(Math.random()*bots.length)];
+  const rows=Math.random()<0.25?3:1;
+  const tIdx=nextSeat(b.seat);
+  if(tIdx>=0){ const t=G.players[tIdx]; t.solid=Math.min(t.rows, t.solid+rows); if(t.solid>=t.rows) t.alive=false; }
+  b.solid=Math.max(0, b.solid-1); b.lines+=rows;
+  updateAll();
+}
+function updateAll(){
+  const alive=aliveSeats();
+  const myTarget=G.mySeat>=0?nextSeat(G.mySeat):-1;
+  G.players.forEach(p=>{
+    if(!p.rootEl) return;
+    for(let r=0;r<p.rows;r++){
+      const cured=r>=p.rows-p.solid; const rowA=p.cellEls[r]; if(!rowA) continue;
+      for(let c=0;c<p.cols;c++){ const cell=rowA[c]; if(!cell) continue;
+        if(cured){ cell.classList.add('cured'); cell.style.background=''; }
+        else { cell.classList.remove('cured'); cell.style.background=p.cells[r][c]||''; } }
+    }
+    if(p.cureEl){ p.cureEl.style.top=((p.rows-p.solid)/p.rows*100)+'%'; p.cureEl.classList.toggle('on', p.solid>0 && p.alive); }
+    p.scoreEl.textContent='固化 '+p.solid+'/'+p.rows+' · '+p.lines+'行';
+    p.rootEl.classList.toggle('out', !p.alive);
+    const isTarget = p.seat===myTarget && p.alive;
+    p.rootEl.classList.toggle('attacked', isTarget);
+  });
+  const me=G.players[G.mySeat]; if(!me) return;
+  document.getElementById('hAlive').textContent=alive.length;
+  document.getElementById('hSolid').textContent=me.solid+'/'+me.rows;
+  const ranked=alive.slice().sort((a,b)=>(b.rows-b.solid)-(a.rows-a.solid));
+  const myRank=ranked.findIndex(p=>p.isMe)+1;
+  document.getElementById('hRank').textContent=me.alive?(myRank+'/'+alive.length):'出局';
+  const tEl=document.getElementById('hTarget');
+  if(myTarget>=0){ const t=G.players[myTarget]; tEl.textContent='你攻击 → #'+(t.seat+1)+' '+t.name; }
+  else tEl.textContent='你攻击 → —';
+  if(!G.over){
+    if(!me.alive) endGame(false);
+    else if(alive.length<=1) endGame(true);
+  }
+}
+function endGame(win){
+  G.over=true; if(G.auto){ clearInterval(G.timer); G.auto=false; document.getElementById('autoBtn').textContent='▶ 自动演示'; }
+  const ov=document.getElementById('result'); ov.className='overlay on '+(win?'win':'lose');
+  document.getElementById('resultTitle').textContent= win?'VICTORY':'DEFEAT';
+  document.getElementById('resultDesc').textContent= win?'你是最后的幸存者！':'你的固化块被压满了。';
+}
+
+/* 按钮接线 */
+document.getElementById('clear1').onclick=()=>myClear(1);
+document.getElementById('clear2').onclick=()=>myClear(3);
+document.getElementById('autoBtn').onclick=()=>{ if(G.auto){ clearInterval(G.timer); G.auto=false; document.getElementById('autoBtn').textContent='▶ 自动演示'; } else { G.auto=true; document.getElementById('autoBtn').textContent='⏸ 停止'; G.timer=setInterval(botTick, 900); } };
+document.getElementById('backHome').onclick=()=>{ if(G.auto){clearInterval(G.timer);G.auto=false;} document.getElementById('result').className='overlay'; enterHome(); };
+document.getElementById('resultBtn').onclick=()=>{ document.getElementById('result').className='overlay'; enterHome(); };
+document.getElementById('devReset').onclick=()=>{ localStorage.removeItem(PROF_KEY); localStorage.removeItem(FP_KEY); location.reload(); };
+
+/* ============ 启动：指纹路由 ============ */
+(function boot(){
+  const fp=getFP();
+  const params=new URLSearchParams(location.search);
+  const roomParam=params.get('room');
+  if(!getProfile()){
+    renderInit(); show('screen-init');            // 新玩家：先初始化
+  } else {
+    ME=getProfile(); enterHome();                 // 老玩家：直接进首页
+  }
+  // 带 ?room= 链接进来：初始化完成后应直达房间（这里简化：老玩家直接建房态）
+  if(roomParam && ME){ G.room=roomParam.toUpperCase(); openRoom(); }
+})();
+</script>
+</body>
+</html>
