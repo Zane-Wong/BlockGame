@@ -117,12 +117,10 @@
 
   /* ── 对手缩略图轨道（右侧竖列）── */
   .rail { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }   /* 右侧 1/6 宽度 */
-  .board.opp { flex: 0 0 auto; background: rgba(12,14,26,0.92); cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s; }
-  .board.opp:hover { border-color: #4ac2d8; box-shadow: 0 0 0 2px rgba(74,194,216,0.45); transform: translateY(-1px); }
+  .board.opp { flex: 0 0 auto; background: rgba(12,14,26,0.92); cursor: pointer; }
   .board.opp.out { cursor: default; }
   .board.opp .tcanvas { width: 100%; aspect-ratio: 10 / 20; flex-shrink: 0; display: block; }   /* 高:宽 = 2:1，与棋盘等比 */
   .board .bhead { display: flex; justify-content: space-between; align-items: center; padding: 4px 7px; font-size: 11px; color: rgba(255,255,255,0.6); position: relative; z-index: 3; }
-  .board .bwatch { font-size: 11px; margin-right: 4px; flex-shrink: 0; filter: drop-shadow(0 0 2px rgba(74,194,216,0.6)); }
   .board .bname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
   .board .bseat { font-size: 9px; color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 6px; margin-left: 4px; flex-shrink: 0; }
   .board .binfo { font-size: 9px; color: rgba(255,255,255,0.4); padding: 2px 7px; background: rgba(0,0,0,0.2); }
@@ -165,13 +163,17 @@
   .board .attacker-tag { position: absolute; top: 4px; left: 6px; font-size: 9px; color: #ff6b6b; background: rgba(0,0,0,.5); padding: 1px 6px; border-radius: 8px; display: none; z-index: 4; }
   .board.attacker .attacker-tag { display: block; }
 
-  /* ── 观战层（覆盖主棋盘）── */
+  /* 观战者标识（HUD 区域，与攻击/被攻击芯片并列） */
+.chip.spectator { border-color: rgba(74,194,216,0.45); background: rgba(74,194,216,0.1); }
+.chip.spectator b { color: #4ac2d8; font-weight: 700; }
+
+/* ── 观战层（覆盖主棋盘）── */
   #spectate { position: absolute; inset: 0; display: none; flex-direction: column; background: rgba(12,14,26,0.98); z-index: 5; }
   .board.main.spectating #stage { visibility: hidden; }
   .board.main.spectating #spectate { display: flex; }
   #spectateCanvas { flex: 1; width: 100%; min-height: 0; display: block; }
-  .spec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: rgba(0,0,0,0.4); font-size: 11px; color: rgba(255,255,255,0.72); }
-  .spec-info { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: rgba(0,0,0,0.4); font-size: 11px; color: rgba(255,255,255,0.72); }
+.spec-info { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
   .spec-exit { flex: 0 0 auto; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.06); color: #fff; border-radius: 8px; padding: 4px 10px; font-size: 11px; cursor: pointer; font-family: inherit; }
 
   /* ── 被淘汰结算蒙层 ── */
@@ -185,12 +187,11 @@
   .elim-card .btn { width: auto; min-width: 180px; margin: 7px auto 0; display: block; }
   .elim-hint { font-size: 12px; color: rgba(255,255,255,0.55); margin-bottom: 16px; }
 
-  /* 被淘汰后右侧缩略图浮于蒙层之上，可点击切换观战 */
-  #battle.dead .rail { position: relative; z-index: 27; }
+  /* 被淘汰蒙层正常盖住右侧缩略图；只有点击「观战剩余对局」隐藏蒙层后，缩略图才露出并可点击切换 */
 
-  /* 当前正在观战的对象高亮 */
-  .board.opp.spectating-now { border-color: #4ac2d8; box-shadow: 0 0 0 3px rgba(74,194,216,0.75); animation: specPulse 1.4s ease-in-out infinite; }
-  @keyframes specPulse { 0%,100% { box-shadow: 0 0 0 3px rgba(74,194,216,0.75); } 50% { box-shadow: 0 0 0 4px rgba(74,194,216,0.35); } }
+  /* 当前正在观战的对象：平静的青色描边 + 「观战中」标签（不使用跳动/脉冲等干扰性动画） */
+  .board.opp.spectating-now { border-color: #4ac2d8; box-shadow: 0 0 0 2px rgba(74,194,216,0.7); }
+  .board.opp.spectating-now .bhead::after { content: '观战中'; color: #4ac2d8; font-weight: 700; font-size: 10px; margin-left: 4px; }
 
   /* 结算排行榜 */
   #result .rank-list { width: 100%; max-width: 340px; max-height: 46vh; overflow-y: auto; margin: 6px 0 18px; display: flex; flex-direction: column; gap: 6px; padding: 0 4px; }
@@ -291,6 +292,7 @@
       <span class="chip">我的固化 <b id="hSolid">0/20</b></span>
       <span class="chip target" id="hTarget">攻击 → —</span>
       <span class="chip attacker" id="hAttacker">← 被 — 攻击</span>
+      <span class="chip spectator" id="hSpectator" style="display:none"></span>
       <span class="nextbox"><span class="k">NEXT</span><canvas id="n0"></canvas></span>
     </div>
     <div id="arena" class="arena"></div>
@@ -310,7 +312,7 @@
     <div class="elim-card">
       <h2>你被淘汰</h2>
       <div class="elim-killer" id="elimKiller"></div>
-      <div class="elim-hint">点击右侧任意对手，可切换观战视角</div>
+      <div class="elim-hint">点击下方「观战剩余对局」后，可点击右侧任意对手切换视角</div>
       <button class="btn primary" id="elimSpectate">观战剩余对局</button>
       <button class="btn ghost" id="elimHome">返回首页</button>
     </div>

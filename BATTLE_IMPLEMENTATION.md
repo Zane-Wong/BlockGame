@@ -151,7 +151,7 @@ node server/index.js
 - [ ] **断线重连**：仍规划中。当前断线即判负；可复用机器人托管机制，使掉线者由机器人代打直至重连。
 - [ ] **历史战绩**：仍规划中（结算排名明细已做，但跨局历史记录/个人战绩库未做）。
 - [ ] **小程序适配**：仍规划中。需将 `Gesture` 事件层与 `Net` 的 WebSocket 替换为小程序 API（逻辑层 `core.js` 已与平台解耦，可直接复用）。
-- [ ] **音效/震动**对战攻击反馈强化：仍规划中。现有引擎已具备 `shake`/`particles`/`audio`，但联机攻击/被攻击的专属音效与震动反馈尚未接线。
+- [x] **音效/震动**对战攻击反馈强化：已落地。`TZ.Audio` 新增 `attack(n)`（锐利发射感）与 `hurt(n)`（低沉受击感）两个合成音效；发动攻击（`onBattleClear`）播放 `attack` + `navigator.vibrate(20)`，被攻击（`onAttack`）播放 `hurt` + `navigator.vibrate([30,40,70])`，沿用既有 `shake`/`flashBoard` 视觉反馈。
 
 ---
 

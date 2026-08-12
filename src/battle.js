@@ -129,6 +129,9 @@
       G.killedBy = m.from;
       var overflow = G.game.board.addCured(m.lines);
       G.game.shake.add(10 + m.lines * 4);
+      // 联机受击反馈：低沉受击音效 + 较强震动
+      if (G.game.audio) G.game.audio.hurt(m.lines);
+      if (navigator.vibrate) navigator.vibrate([30, 40, 70]);
       flashBoard();
       if (overflow) { G.game.gameOver(); }
     }
@@ -170,6 +173,7 @@
     if (main) main.classList.remove('spectating');
     for (var k in G.thumbs) G.thumbs[k].wrap.classList.remove('spectating-now');
     var el = $('eliminated'); if (el) el.classList.remove('on');
+    var sp = $('hSpectator'); if (sp) sp.style.display = 'none';
     showResult(m.winner === G.mySeat, m.ranking);
   }
 
@@ -277,9 +281,8 @@
 
     var head = document.createElement('div');
     head.className = 'bhead';
-    // 显示头像+名称 + 座位号角标；👁 表示「点击可切换观战该对手」（任意对手皆可，不限于被你攻击者）
-    head.innerHTML = '<span class="bwatch">👁</span>' +
-      '<span class="bname">' + (s.avatar + ' ' + s.name) + '</span>' +
+    // 显示头像+名称 + 座位号角标（被观战时由 .spectating-now 显示「观战中」标签）
+    head.innerHTML = '<span class="bname">' + (s.avatar + ' ' + s.name) + '</span>' +
       '<span class="bseat">#' + (seat + 1) + '</span>';
     var binfo = document.createElement('div');
     binfo.className = 'binfo';
@@ -381,6 +384,9 @@
       // 自愈：挖掉自己一层固化块（若存在）
       if (game.board.cured > 0) game.board.digCured();
       G.net.send({ t: 'clear', lines: n });
+      // 联机攻击反馈：我发动攻击（消行即攻击下一对手）
+      if (game.audio) game.audio.attack(n);
+      if (navigator.vibrate) navigator.vibrate(20);
     };
     game.onGameOver = function (score, lines, best) {
       G.net.send({ t: 'dead' });
@@ -540,6 +546,13 @@
     var main = document.querySelector('.board.main');
     if (main) main.classList.add('spectating');
     var el = $('eliminated'); if (el) el.classList.remove('on');
+    // 观战标识：在 HUD 区域显示（人多时显示人数）
+    var sp = $('hSpectator');
+    if (sp) {
+      var myName = (ME ? ME.name : '你') || '你';
+      sp.innerHTML = '<b>' + (myName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')) + '</b> 正在观战';
+      sp.style.display = '';
+    }
     // 立即同步渲染一次（不依赖循环时序），再补一帧确保画布尺寸就绪
     renderSpectate(seat);
     requestAnimationFrame(function () { renderSpectate(seat); });
@@ -561,6 +574,7 @@
     if (specRAF) { cancelAnimationFrame(specRAF); specRAF = null; }
     var main = document.querySelector('.board.main');
     if (main) main.classList.remove('spectating');
+    var sp = $('hSpectator'); if (sp) sp.style.display = 'none';
     if (G.dead) showEliminated(G.killedBy);   // 自己已出局 → 回到淘汰蒙层
   }
 

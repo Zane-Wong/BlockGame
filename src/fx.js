@@ -111,6 +111,22 @@
     });
   };
 
+  /* 联机：我发动攻击（消行即攻击下一对手）—— 锐利发射感 */
+  Audio.prototype.attack = function (n) {
+    var self = this;
+    var lines = n || 1;
+    this.tone({ from: 520, to: 1320, dur: 0.07, vol: 0.18, type: 'square' });
+    setTimeout(function () { self.noise(0.1, 0.16, 900); }, 55);
+    setTimeout(function () { self.tone({ from: 220 + lines * 50, to: 80, dur: 0.15, vol: 0.22, type: 'sawtooth' }); }, 70);
+  };
+
+  /* 联机：我被攻击 —— 低沉受击感 */
+  Audio.prototype.hurt = function (n) {
+    var lines = n || 1;
+    this.tone({ from: 180 - lines * 12, to: 55, dur: 0.24, vol: 0.26, type: 'sawtooth' });
+    this.noise(0.22, 0.14 + 0.04 * lines, 360);
+  };
+
   /* ---------- 粒子 ---------- */
   function Particles() { this.list = []; }
 
