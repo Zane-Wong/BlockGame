@@ -1,0 +1,16 @@
+{
+  "name": "tz-battle-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "魔方坠落·手势俄罗斯方块 — 联机对战服务器（零外部依赖，Node 内置模块实现 WebSocket）",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "author": "wangzhuo <mail_zhuo@163.com>",
+  "license": "Copyright (c) 2026 wangzhuo. All rights reserved."
+}
