@@ -271,7 +271,9 @@
       this.best = this.score;
       try { localStorage.setItem('tz_best', String(this.best)); } catch (e) { }
     }
-    this.ui.showOver(this.score, this.lines, this.best);
+    // 联机对战模式下由 battle 接管结局（发送 dead、由服务器裁决胜负）
+    if (this.onGameOver) this.onGameOver(this.score, this.lines, this.best);
+    else this.ui.showOver(this.score, this.lines, this.best);
     this.syncHud();
   };
 
@@ -499,6 +501,8 @@
     var gained = TZ.scoreFor(n, this.level, false);
     if (this.combo > 0) gained += 50 * this.combo * (this.level + 1);
     this.score += gained;
+    // 联机对战：消行既广播攻击、又自愈挖掉自己一层固化块（若存在）
+    if (this.onBattleClear && n > 0) this.onBattleClear(n, this.lines, this.score);
     this.clearInfo = null;
     this.state = STATE.PLAYING;
     this.syncHud();
@@ -558,6 +562,7 @@
     var flashRows = this.clearInfo ? this.clearInfo.rows : null;
     var flashT = this.clearInfo ? this.clearInfo.t / this.clearInfo.dur : 0;
     this.renderer.stack(this.board, flashRows, flashT);
+    if (this.board.cured > 0) this.renderer.curedLine(this.board.cured);
 
     if (this.piece && this.state !== STATE.OVER && this.state !== STATE.READY) {
       var g = this.gesture.getState();
@@ -628,6 +633,7 @@
     var self = this;
     var last = performance.now();
     function frame(now) {
+      if (self._stopped) return;              // 终局/退出：立即停止主循环，避免结算时棋盘仍在落块
       var dt = Math.min(50, now - last);
       last = now;
       self.update(dt);
@@ -635,6 +641,12 @@
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
+  };
+
+  /* 立即停止主循环并把状态置为 OVER（联机对战终局/被淘汰时由 battle 调用） */
+  Game.prototype.stop = function () {
+    this._stopped = true;
+    this.state = STATE.OVER;
   };
 
   Game.STATE = STATE;

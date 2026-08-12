@@ -167,6 +167,7 @@
     this.rows = rows || CFG.ROWS;
     this.buffer = buffer == null ? CFG.BUFFER : buffer;
     this.total = this.rows + this.buffer;
+    this.cured = 0;        // 固化块行数（从底部向上累计），联机对战专用
     this.grid = [];
     for (var y = 0; y < this.total; y++) {
       var row = [];
@@ -174,6 +175,34 @@
       this.grid.push(row);
     }
   }
+
+  /* 固化块：在底部插入 n 行不可消除的固化块，整盘随之上移。
+   * 返回 true 表示顶部有内容被挤出（溢出，判负）。联机对战时被攻击时调用。 */
+  Board.prototype.addCured = function (n) {
+    if (n <= 0) return false;
+    var overflow = false;
+    for (var k = 0; k < n; k++) {
+      var topRow = this.grid[0];
+      for (var x = 0; x < this.cols; x++) { if (topRow[x]) { overflow = true; break; } }
+      this.grid.shift();
+      var row = [];
+      for (var c = 0; c < this.cols; c++) row.push({ type: 'X', color: '#3a2a2a', cured: true });
+      this.grid.push(row);
+      this.cured++;
+    }
+    return overflow;
+  };
+
+  /* 自愈：清除最底一行固化块（下挖一层），整盘下移、顶部补空。
+   * 自己消行时触发一次，相当于「消一行、同时挖掉自己一层固化块」。 */
+  Board.prototype.digCured = function () {
+    if (this.cured <= 0) return;
+    this.grid.pop();
+    this.cured--;
+    var row = [];
+    for (var x = 0; x < this.cols; x++) row.push(null);
+    this.grid.unshift(row);
+  };
 
   Board.prototype.at = function (x, y) {
     if (x < 0 || x >= this.cols || y < 0 || y >= this.total) return undefined;
@@ -234,10 +263,11 @@
     return placed;
   };
 
-  /* 找出所有满行 */
+  /* 找出所有满行（跳过底部固化带——固化行不可被普通消行清除） */
   Board.prototype.fullRows = function () {
     var rows = [];
-    for (var y = 0; y < this.total; y++) {
+    var top = this.total - this.cured;   // 可消除区上界（不含固化带）
+    for (var y = 0; y < top; y++) {
       var full = true;
       for (var x = 0; x < this.cols; x++) {
         if (!this.grid[y][x]) { full = false; break; }
@@ -358,6 +388,40 @@
   TZ.Piece = Piece;
   TZ.Board = Board;
   TZ.scoreFor = scoreFor;
+
+  /* 棋盘序列化为定长字符串，便于网络同步（联机对战缩略图）。
+   * 每行 10 个字符：空格=空，'#'=固化块，'1'..'7'=对应 TYPES 的方块。
+   * 仅序列化可见区（去掉顶部缓冲行）。 */
+  TZ.packBoard = function (board) {
+    var rows = [];
+    for (var y = board.buffer; y < board.total; y++) {
+      var s = '';
+      for (var x = 0; x < board.cols; x++) {
+        var c = board.grid[y][x];
+        if (!c) s += ' ';
+        else if (c.cured) s += '#';
+        else s += (TZ.TYPES.indexOf(c.type) + 1).toString();
+      }
+      rows.push(s);
+    }
+    return rows.join('/');
+  };
+  /* 反序列化单行（供缩略图渲染），返回 [{type,color,cured}|null,...] */
+  TZ.unpackRow = function (str) {
+    var out = [];
+    var types = TZ.TYPES;
+    for (var i = 0; i < str.length; i++) {
+      var ch = str[i];
+      if (ch === ' ' || ch === '.') out.push(null);
+      else if (ch === '#') out.push({ cured: true });
+      else {
+        var idx = parseInt(ch, 10) - 1;
+        var t = types[idx] || 'I';
+        out.push({ type: t, color: TZ.COLORS[t] });
+      }
+    }
+    return out;
+  };
 
 })(typeof window !== 'undefined' ? window : this);
 

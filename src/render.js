@@ -146,6 +146,47 @@
     ctx.stroke();
   };
 
+  /* 固化块：斜纹底 + 金色描边，明确区分于可消除方块 */
+  Renderer.prototype.curedBlock = function (gx, gy) {
+    var ctx = this.ctx;
+    var r = this.cellRect(gx, gy);
+    var pad = 1.5, x = r.x + pad, y = r.y + pad, s = r.s - pad * 2;
+    roundRect(ctx, x, y, s, s, s * 0.18);
+    ctx.fillStyle = '#2a1e1e'; ctx.fill();
+    ctx.save();
+    roundRect(ctx, x, y, s, s, s * 0.18); ctx.clip();
+    ctx.strokeStyle = 'rgba(226,75,74,0.45)';
+    ctx.lineWidth = Math.max(2, s * 0.16);
+    var step = Math.max(4, s * 0.34);
+    for (var i = -s; i < s * 2; i += step) {
+      ctx.beginPath();
+      ctx.moveTo(x + i, y);
+      ctx.lineTo(x + i + s, y + s);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.strokeStyle = rgba('#ffd84d', 0.6);
+    ctx.lineWidth = 1;
+    roundRect(ctx, x, y, s, s, s * 0.18); ctx.stroke();
+  };
+
+  /* 固化带顶部金线：标出「可被攻击压到的高度」 */
+  Renderer.prototype.curedLine = function (curedRows) {
+    if (!curedRows || curedRows <= 0) return;
+    var ctx = this.ctx, L = this.L;
+    var gy = L.y + (L.rows - curedRows) * L.cell;
+    ctx.save();
+    ctx.strokeStyle = rgba('#ffd84d', 0.75);
+    ctx.lineWidth = 2;
+    ctx.shadowColor = rgba('#ffd84d', 0.6);
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.moveTo(L.x, gy + 0.5);
+    ctx.lineTo(L.x + L.cols * L.cell, gy + 0.5);
+    ctx.stroke();
+    ctx.restore();
+  };
+
   /* 已固化的砖块 */
   Renderer.prototype.stack = function (board, flashRows, flashT) {
     var buffer = board.buffer;
@@ -155,12 +196,27 @@
       for (var x = 0; x < board.cols; x++) {
         var c = board.grid[y][x];
         if (!c) continue;
+        if (c.cured) { this.curedBlock(x, gy); continue; }
         if (isFlash) {
           var k = 1 - flashT;
           this.block(x, gy, '#ffffff', { alpha: 0.35 + 0.65 * k, glow: k });
         } else {
           this.block(x, gy, c.color);
         }
+      }
+    }
+  };
+
+  /* 缩略图：直接吃序列化行（TZ.unpackRow 的结果），复用主渲染风格 */
+  Renderer.prototype.thumbStack = function (rows) {
+    var ctx = this.ctx, L = this.L;
+    for (var y = 0; y < rows.length; y++) {
+      var row = rows[y];
+      for (var x = 0; x < row.length; x++) {
+        var c = row[x];
+        if (!c) continue;
+        if (c.cured) this.curedBlock(x, y);
+        else this.block(x, y, c.color);
       }
     }
   };
