@@ -97,6 +97,7 @@
     this.lastTapTime = 0;
     this.lastTapX = 0;
     this.lastTapY = 0;
+    this.pending = null;     // 转场态（消行/弹射）期间被记录的待接续按下
   }
 
   Gesture.prototype.reset = function () {
@@ -118,6 +119,7 @@
     this.navBaseCol = 0;      // 进入导航时的方块列（= 正下方起点），滑动 = 相对手指按下点的位移
     this.charging = false;
     this.charge = 0;
+    this.pending = null;
     if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; }
   };
 
@@ -187,7 +189,14 @@
 
   /* ---------- 判定逻辑层（可移植） ---------- */
   Gesture.prototype.handleDown = function (x, y, t) {
-    if (this.h.isBusy && this.h.isBusy()) return;
+    if (this.h.isBusy && this.h.isBusy()) {
+      // 转场态（消行动画 CLEARING / 弹射 LAUNCHING 等）期间不要直接吞掉这次按下：
+      // 记下它，待回到可操作态（PLAYING）后由 tick() 自动接续，
+      // 否则玩家在消行后立刻长按蓄力会被吃掉，要再按一次才生效。
+      this.pending = { x: x, y: y, t: t };
+      return;
+    }
+    this.pending = null;
     this.reset();
     this.active = true;
     this.mode = 'PENDING';
@@ -202,9 +211,9 @@
     var self = this;
     this.holdTimer = setTimeout(function () {
       if (!self.active || self.mode !== 'PENDING') return;
-      var dx = Math.abs(self.lastX - self.startX);
-      var dy = Math.abs(self.lastY - self.startY);
-      if (dx > P.HOLD_TOL || dy > P.HOLD_TOL) return;
+      // 不再因轻微手指抖动放弃蓄力：200ms 内只要模式仍是 PENDING
+      // （move / rotate 都未被触发），就进入蓄力 / 导航。原 10px 抖动阈值
+      // 小于横移阈值，会制造「既不蓄力也不移动」的死区，故移除该判定。
       if (self.onPiece) {
         self.mode = 'NAVIGATE';
         // 用方块实际中心列做导航起点，不依赖触点落在哪一格。
@@ -367,12 +376,23 @@
 
   /* 蓄力值由主循环推进 */
   Gesture.prototype.tick = function (dt) {
+    // 接续转场期间被记录的按下：一旦回到可操作态就自动开始手势，
+    // 这样「消行后立刻长按」不会被吞掉（无需抬手重按）。
+    if (this.pending) {
+      if (Date.now() - this.pending.t > 700) {
+        this.pending = null;                       // 超时（如本局已结束），丢弃过期记录
+      } else if (!(this.h.isBusy && this.h.isBusy())) {
+        var p = this.pending; this.pending = null;
+        this.handleDown(p.x, p.y, Date.now());
+      }
+    }
     if (this.mode === 'CHARGE' && this.charging) {
       this.charge = Math.min(1, this.charge + dt / P.CHARGE_MS);
     }
   };
 
   Gesture.prototype.handleUp = function (t) {
+    this.pending = null;          // 手指已抬起，取消任何待接续的按下
     if (!this.active) return;
     clearTimeout(this.holdTimer);
     this.holdTimer = null;
