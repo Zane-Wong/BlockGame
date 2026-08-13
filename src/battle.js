@@ -32,7 +32,6 @@
     alive: [],                 // 存活座位号数组（按座位序）
     started: false, over: false,
     dead: false,               // 本地玩家是否已被淘汰
-    spectating: null,          // 正在观战的座位号（null=未观战）
     killedBy: null,            // 淘汰我的对手座位号（客户端侧记录）
     game: null, syncTimer: null,
     thumbs: {},                // seat -> {wrap, cv, ctx, dpr, renderer}
@@ -58,6 +57,9 @@
   function toast(msg) {
     var t = $('toast'); t.textContent = msg; t.classList.add('on');
     clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.classList.remove('on'); }, 1800);
+  }
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   /* ===================== 网络 ===================== */
@@ -88,8 +90,8 @@
 
   function onStart(m) {
     G.started = true; G.over = false;
-    G.dead = false; G.spectating = null; G.killedBy = null;
-    $('battle').classList.remove('dead');
+    G.dead = false; G.killedBy = null;
+    Spectate.reset();                                  // 清理上一局残留的观战状态
     G.lastBoard = {}; G.lastPiece = {}; G.peers = {};
     G.alive = [];
     for (var i = 0; i < G.seats.length; i++) if (G.seats[i]) G.alive.push(i);
@@ -119,7 +121,7 @@
       G.peers[i] = { alive: p.alive, score: p.score, lines: p.lines, board: p.board, piece: p.piece };
       renderThumb(i, p.board, p.piece, p.alive, p.score, p.lines);
     }
-    if (G.spectating != null && G.peers[G.spectating]) renderSpectate(G.spectating);
+    // 观战画面由 Spectate.loop 每帧自管刷新，这里无需显式重绘
     updateHud();
   }
 
@@ -147,33 +149,26 @@
     if (t) t.wrap.classList.add('out');
     updateHud();
     // 正在观战的对象出局：提示并自动切换到下一个存活对手
-    if (G.spectating === seat) {
+    if (Spectate.target === seat) {
       toast((G.seats[seat] ? G.seats[seat].name : '该玩家') + ' 已被淘汰');
-      spectateNext();
+      Spectate.next();
     }
     if (seat === G.mySeat) {
       // 自己被淘汰：由服务器权威确认（m.by 或本地 G.killedBy）
       G.dead = true;
       if (G.syncTimer) { clearInterval(G.syncTimer); G.syncTimer = null; }
-      if (G.game && G.game.stop) G.game.stop();   // 冻结本地棋盘，主棋盘随即被观战层/蒙层覆盖
+      if (G.game && G.game.stop) G.game.stop();   // 冻结本地棋盘，主棋盘随即被淘汰蒙层覆盖
       var killer = (G.killedBy != null) ? G.killedBy : m.by;
-      $('battle').classList.add('dead');      // 让右侧缩略图浮于淘汰蒙层之上，可点击切换观战
       showEliminated(killer);
     }
   }
 
   function onOver(m) {
     G.over = true;
-    if (specRAF) { cancelAnimationFrame(specRAF); specRAF = null; }
     if (G.syncTimer) { clearInterval(G.syncTimer); G.syncTimer = null; }
     if (G.game && G.game.stop) G.game.stop();          // 冻结本地棋盘，避免结算时棋盘仍在落块
-    // 关闭观战视图与高亮，让结算层干净呈现
-    G.spectating = null;
-    var main = document.querySelector('.board.main');
-    if (main) main.classList.remove('spectating');
-    for (var k in G.thumbs) G.thumbs[k].wrap.classList.remove('spectating-now');
+    Spectate.reset();                                  // 关闭观战视图与高亮、隐藏 HUD 标识
     var el = $('eliminated'); if (el) el.classList.remove('on');
-    var sp = $('hSpectator'); if (sp) sp.style.display = 'none';
     showResult(m.winner === G.mySeat, m.ranking);
   }
 
@@ -244,7 +239,7 @@
     mainWrap.appendChild(spec);
     arena.appendChild(mainWrap);
     // 必须在 appendChild 之后才能通过 $('specExit') 找到元素
-    $('specExit').onclick = exitSpectate;
+    $('specExit').onclick = function () { Spectate.exit(); };
 
     // ── 对手缩略图轨道（竖列，攻击目标优先）──
     G.thumbs = {};
@@ -292,8 +287,8 @@
     var atag = document.createElement('div'); atag.className = 'attacker-tag'; atag.textContent = '← 攻击我';
     wrap.appendChild(head); wrap.appendChild(binfo); wrap.appendChild(cv); wrap.appendChild(tag); wrap.appendChild(atag);
 
-    // 点击缩略图 → 进入观战
-    wrap.addEventListener('click', function () { enterSpectate(seat); });
+    // 点击事件改由 #app 上的「几何命中」统一处理器派发（见 connectNet 附近），
+    // 不再此处挂监听 —— 避免某些环境下 click.target 落在 #app 而非缩略图导致切换失效。
 
     G.thumbs[seat] = { wrap: wrap, cv: cv, ctx: null, dpr: 1, renderer: null, binfo: binfo, seat: seat };
     return wrap;
@@ -478,117 +473,188 @@
     return a[(idx - 1 + a.length) % a.length];
   }
 
-  /* ===================== 观战 ===================== */
-  var specRenderer = null, specCtx = null, specDpr = 1, specRAF = null, specRunning = false;
+  /* ===================== 观战模块 ===================== *
+   * 状态：
+   *   active  —— 是否处于观战态（被淘汰后点「观战剩余对局」进入）
+   *   target  —— 正在观战的座位号（null = 未观战）
+   * 入口：
+   *   enter(seat)  指定对手进入观战（点击右侧缩略图任意处触发；可在已观战时切换）
+   *   next()       被观战者出局时自动切到下一个存活对手
+   *   exit()       退出观战（回到「被淘汰」蒙层）
+   *   reset()      彻底停止（游戏结束 / 返回首页），不弹蒙层
+   * 渲染：
+   *   loop()       每帧重绘当前 target 的棋盘（活动方块随快照实时刷新）
+   * 标识：
+   *   setBadge()   在 HUD 显示「xxx 正在观战」（多人观战时显示「N人正在观战」）
+   * ===================================================== */
+  var Spectate = {
+    active: false, target: null,
+    renderer: null, ctx: null, dpr: 1, raf: null, running: false,
 
-  function setupSpectateRenderer() {
-    var cv = $('spectateCanvas');
-    if (!cv) return false;
-    var cssW = cv.clientWidth, cssH = cv.clientHeight;
-    if (cssW <= 0 || cssH <= 0) return false;
-    specDpr = Math.min(global.devicePixelRatio || 1, 2.5);
-    cv.width = Math.floor(cssW * specDpr); cv.height = Math.floor(cssH * specDpr);
-    var cell = Math.floor(Math.min(cssW / 10, cssH / 20));
-    if (cell < 2) return false;
-    var offX = Math.floor((cssW - cell * 10) / 2), offY = Math.floor((cssH - cell * 20) / 2);
-    specCtx = cv.getContext('2d');
-    specRenderer = new TZ.Renderer(specCtx, { x: offX, y: offY, cell: cell, cols: 10, rows: 20, w: cssW, h: cssH });
-    return true;
-  }
+    /* 进入 / 切换观战对象 */
+    enter: function (seat) {
+      if (G.over) return;
+      if (seat == null || seat === G.mySeat || !G.seats[seat]) return;
+      var switching = (this.active && this.target !== seat);
+      this.target = seat;
+      this.active = true;
+      // 高亮当前观战对象（平静青色描边 + 「观战中」标签）
+      for (var k in G.thumbs) if (G.thumbs[k].wrap) G.thumbs[k].wrap.classList.remove('spectating-now');
+      if (G.thumbs[seat]) G.thumbs[seat].wrap.classList.add('spectating-now');
+      var main = document.querySelector('.board.main');
+      if (main) main.classList.add('spectating');
+      // —— 兜底显隐：内联 style 优先级最高，杜绝 CSS 级联未生效导致主棋盘残留 ——
+      // 1) 强制 #spectate 从 display:none 切到 display:flex
+      // 2) 强制 #stage 不可见（保留布局但隐藏内含棋盘）
+      // 3) offsetHeight 读取引发浏览器同步回流，#spectate 的 clientWidth/Height 下次读取即为真实尺寸
+      var spec = $('spectate'); var stage = $('stage');
+      if (spec) { spec.style.display = 'flex'; spec.offsetHeight; }
+      if (stage) { stage.style.visibility = 'hidden'; }
+      // 隐藏「被淘汰」蒙层（若仍显示）
+      var el = $('eliminated'); if (el) el.classList.remove('on');
+      this.setBadge();
+      // 强制同步测量 canvas 尺寸（getBoundingClientRect 已自带回流），并立即绘制首帧
+      this.ensureSetup();
+      this.render();
+      this.ensureLoop();
+      toast((switching ? '切换观战：' : '观战中：') + (G.seats[seat] ? G.seats[seat].name : '#' + (seat + 1)));
+    },
 
-  function renderSpectate(seat) {
-    if (G.over) return;                        // 终局后不再渲染观战画面
-    if (G.spectating == null || seat !== G.spectating) return;
-    var peer = G.peers[seat];
-    if (!peer) return;
-    if (!specRenderer && !setupSpectateRenderer()) return;   // 画布尚未就绪，等下一帧重试
-    // 整段包在 try 里：任何单帧渲染异常都不应让观战循环停摆（否则切换会卡住）
-    try {
-      var ctx = specCtx;
-      ctx.setTransform(specDpr, 0, 0, specDpr, 0, 0);
-      ctx.clearRect(0, 0, $('spectateCanvas').width, $('spectateCanvas').height);
-      specRenderer.field();
-      var rows = (peer.board || '').split('/').map(function (r) { return TZ.unpackRow(r); });
-      specRenderer.thumbStack(rows);
-      // 活动方块（跳过已有块的位置）
-      var piece = peer.piece;
-      if (piece && piece.t && TZ.SHAPES[piece.t] && TZ.COLORS[piece.t]) {
-        var shape = TZ.SHAPES[piece.t][piece.r || 0];
-        var color = TZ.COLORS[piece.t];
-        var px = piece.x | 0, py = (piece.y | 0) - TZ.CFG.BUFFER;
-        for (var k = 0; k < shape.length; k++) {
-          var gx = shape[k][0] + px, gy = shape[k][1] + py;
-          if (gy < 0 || gy >= rows.length) continue;
-          if (gx < 0 || gx >= 10) continue;
-          if (rows[gy] && rows[gy][gx] > 0) continue;               // 已有块 → 跳过
-          specRenderer.block(gx, gy, color);
-        }
-      }
-      var cured = computeCured(peer.board);
-      if (cured > 0) specRenderer.curedLine(cured);
+    /* 被观战者出局 → 自动跳到下一个存活对手；无则退出 */
+    next: function () {
+      var cand = [];
+      for (var i = 0; i < G.alive.length; i++) if (G.alive[i] !== G.mySeat) cand.push(G.alive[i]);
+      if (!cand.length) { this.exit(); return; }
+      var cur = (this.target == null) ? -1 : this.target;
+      var idx = cand.indexOf(cur);
+      var nxt = cand[(idx + 1) % cand.length];
+      this.enter(nxt);
+    },
 
-      // 信息头
-      var s = G.seats[seat];
-      var tgt = nextSeatOf(seat);
-      var info = (s ? (s.avatar + ' ' + s.name) : '玩家') + ' #' + (seat + 1) +
-        ' · ' + (peer.score || 0) + '分 · ' + (peer.lines || 0) + '行' +
-        (peer.alive ? '' : ' · 出局') +
-        (tgt >= 0 ? ' · 攻击 → #' + (tgt + 1) : '');
-      var si = $('specInfo'); if (si) si.textContent = info;
-    } catch (e) { /* 单帧渲染异常不影响后续切换 */ }
-  }
+    /* 退出观战：回到「被淘汰」蒙层（若自己已出局） */
+    exit: function () {
+      this.reset();
+      if (G.dead) showEliminated(G.killedBy);
+    },
 
-  function enterSpectate(seat) {
-    if (seat == null || seat === G.mySeat || !G.seats[seat]) return;
-    G.spectating = seat;
-    for (var k in G.thumbs) G.thumbs[k].wrap.classList.remove('spectating-now');
-    if (G.thumbs[seat]) G.thumbs[seat].wrap.classList.add('spectating-now');
-    var main = document.querySelector('.board.main');
-    if (main) main.classList.add('spectating');
-    var el = $('eliminated'); if (el) el.classList.remove('on');
-    // 观战标识：在 HUD 区域显示（人多时显示人数）
-    var sp = $('hSpectator');
-    if (sp) {
-      var myName = (ME ? ME.name : '你') || '你';
-      sp.innerHTML = '<b>' + (myName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')) + '</b> 正在观战';
+    /* 彻底停止观战（不弹蒙层）：游戏结束 / 返回首页 */
+    reset: function () {
+      this.active = false; this.target = null;
+      this.stopLoop();
+      var main = document.querySelector('.board.main');
+      if (main) main.classList.remove('spectating');
+      // —— 兜底恢复：内联 style 清空，回到 CSS 默认（display:none） ——
+      var spec = $('spectate'); var stage = $('stage');
+      if (spec) spec.style.display = '';
+      if (stage) stage.style.visibility = '';
+      for (var k in G.thumbs) if (G.thumbs[k].wrap) G.thumbs[k].wrap.classList.remove('spectating-now');
+      var sp = $('hSpectator'); if (sp) sp.style.display = 'none';
+    },
+
+    /* HUD 标识：当前仅本地玩家观战；多人同时观战时可传 count 显示「N人正在观战」 */
+    setBadge: function (count) {
+      var sp = $('hSpectator');
+      if (!sp) return;
+      if (!this.active) { sp.style.display = 'none'; return; }
+      var name = (ME ? ME.name : '你') || '你';
+      sp.innerHTML = (count && count > 1)
+        ? (count + '人正在观战')
+        : ('<b>' + escapeHtml(name) + '</b> 正在观战');
       sp.style.display = '';
-    }
-    // 立即同步渲染一次（不依赖循环时序），再补一帧确保画布尺寸就绪
-    renderSpectate(seat);
-    requestAnimationFrame(function () { renderSpectate(seat); });
-    // 启动 / 续接观战渲染循环：每帧按 G.spectating 重绘，切换对手自动生效
-    if (!specRunning) { specRunning = true; spectateLoop(); }
-    toast('观战中：' + (G.seats[seat] ? G.seats[seat].name : '#' + (seat + 1)));
-  }
+    },
 
-  /* 持续观战渲染循环：G.spectating 变化时自动切到新对手 */
-  function spectateLoop() {
-    if (G.spectating == null || G.over) { specRunning = false; specRAF = null; return; }
-    renderSpectate(G.spectating);
-    specRAF = requestAnimationFrame(spectateLoop);
-  }
+    ensureSetup: function () {
+      if (this.renderer) return true;
+      var cv = $('spectateCanvas');
+      if (!cv) return false;
+      // 强制浏览器同步回流：display:none→flex 后 clientWidth 可能仍为 0
+      var rect = cv.getBoundingClientRect();
+      var cssW = rect.width || cv.clientWidth, cssH = rect.height || cv.clientHeight;
+      if (cssW <= 0 || cssH <= 0) return false;
+      this.dpr = Math.min(global.devicePixelRatio || 1, 2.5);
+      cv.width = Math.floor(cssW * this.dpr); cv.height = Math.floor(cssH * this.dpr);
+      var cell = Math.floor(Math.min(cssW / 10, cssH / 20));
+      if (cell < 2) return false;
+      var offX = Math.floor((cssW - cell * 10) / 2), offY = Math.floor((cssH - cell * 20) / 2);
+      this.ctx = cv.getContext('2d');
+      this.renderer = new TZ.Renderer(this.ctx, { x: offX, y: offY, cell: cell, cols: 10, rows: 20, w: cssW, h: cssH });
+      return true;
+    },
 
-  function exitSpectate() {
-    G.spectating = null;
-    specRunning = false;
-    if (specRAF) { cancelAnimationFrame(specRAF); specRAF = null; }
-    var main = document.querySelector('.board.main');
-    if (main) main.classList.remove('spectating');
-    var sp = $('hSpectator'); if (sp) sp.style.display = 'none';
-    if (G.dead) showEliminated(G.killedBy);   // 自己已出局 → 回到淘汰蒙层
-  }
+    ensureLoop: function () { if (this.running) return; this.running = true; this.loop(); },
+    stopLoop: function () { this.running = false; if (this.raf) { cancelAnimationFrame(this.raf); this.raf = null; } },
+    loop: function () {
+      if (!this.running || !this.active || G.over) { this.running = false; this.raf = null; return; }
+      this.render();
+      var self = this;
+      this.raf = requestAnimationFrame(function () { self.loop(); });
+    },
 
-  function spectateNext() {
-    // 选下一个存活对手（跳过自己）
-    var cand = [];
-    for (var i = 0; i < G.alive.length; i++) if (G.alive[i] !== G.mySeat) cand.push(G.alive[i]);
-    if (!cand.length) { exitSpectate(); return; }
-    // 从当前观战对象之后找
-    var cur = (G.spectating == null) ? -1 : G.spectating;
-    var idx = cand.indexOf(cur);
-    var next = cand[(idx + 1) % cand.length];
-    enterSpectate(next);
-  }
+    render: function () {
+      if (G.over || !this.active || this.target == null) return;
+      var seat = this.target;
+      // 优先用 peers（完整快照），后备 lastBoard/lastPiece（与缩略图同源，更可靠）
+      var peer = G.peers[seat] || {};
+      var board = peer.board || G.lastBoard[seat] || '';
+      var piece = peer.piece || G.lastPiece[seat] || null;
+      // 无数据时画提示文字而非静默返回空白
+      if (!board && !piece) {
+        this._drawNoData('等待数据…');
+        return;
+      }
+      try {
+        if (!this.ensureSetup()) { this._drawNoData('画布未就绪'); return; }
+        var ctx = this.ctx;
+        ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+        ctx.clearRect(0, 0, $('spectateCanvas').width, $('spectateCanvas').height);
+        this.renderer.field();
+        var rows = (board || '').split('/').map(function (r) { return TZ.unpackRow(r); });
+        this.renderer.thumbStack(rows);
+        // 活动方块（跳过已有块的位置）
+        if (piece && piece.t && TZ.SHAPES[piece.t] && TZ.COLORS[piece.t]) {
+          var shape = TZ.SHAPES[piece.t][piece.r || 0];
+          var color = TZ.COLORS[piece.t];
+          var px = piece.x | 0, py = (piece.y | 0) - TZ.CFG.BUFFER;
+          for (var k = 0; k < shape.length; k++) {
+            var gx = shape[k][0] + px, gy = shape[k][1] + py;
+            if (gy < 0 || gy >= rows.length) continue;
+            if (gx < 0 || gx >= 10) continue;
+            if (rows[gy] && rows[gy][gx] > 0) continue;
+            this.renderer.block(gx, gy, color);
+          }
+        }
+        var cured = computeCured(board);
+        if (cured > 0) this.renderer.curedLine(cured);
+        // 信息头
+        var s = G.seats[seat];
+        var tgt = nextSeatOf(seat);
+        var info = (s ? (s.avatar + ' ' + s.name) : '玩家') + ' #' + (seat + 1) +
+          ' · ' + (peer.score || 0) + '分 · ' + (peer.lines || 0) + '行' +
+          ((peer != null && peer.alive === false) ? ' · 出局' : '') +
+          (tgt >= 0 ? ' · 攻击 → #' + (tgt + 1) : '');
+        var si = $('specInfo'); if (si) si.textContent = info;
+      } catch (e) {
+        /* 单帧异常不影响后续切换 */
+        this._drawNoData('渲染异常');
+      }
+    },
+
+    /* 数据不可用时在画布中央显示提示文字 */
+    _drawNoData: function (msg) {
+      try {
+        if (!this.ensureSetup()) return;
+        var ctx = this.ctx;
+        var cv = $('spectateCanvas');
+        ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+        ctx.clearRect(0, 0, cv.width, cv.height);
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.font = '14px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(msg, cv.width / this.dpr / 2, cv.height / this.dpr / 2);
+      } catch (e) { /* 静默 */ }
+    },
+  };
 
   /* ===================== 被淘汰结算蒙层 ===================== */
   function showEliminated(bySeat) {
@@ -609,7 +675,6 @@
   function showResult(win, ranking) {
     var ov = $('result');
     ov.className = 'on ' + (win ? 'win' : 'lose');
-    $('battle').classList.remove('dead');        // 解除 rail 置顶，避免压住结算层
     $('resultTitle').textContent = win ? 'VICTORY' : 'DEFEAT';
     $('resultDesc').textContent = win ? '你是最后的幸存者！' : '对战结束，看看你的名次 →';
     var listEl = $('rankList');
@@ -695,17 +760,13 @@
     $('roomBack').onclick = function () { G.net.send({ t: 'leave' }); showScreen('screen-home'); };
     $('backHome').onclick = function () {
       if (G.syncTimer) { clearInterval(G.syncTimer); G.syncTimer = null; }
-      var main = document.querySelector('.board.main'); if (main) main.classList.remove('spectating');
-      G.spectating = null; G.dead = false;
-      $('battle').classList.remove('dead');
+      Spectate.reset(); G.dead = false;
       G.net.send({ t: 'leave' });
       G.started = false; G.over = true; G.game = null;
       showScreen('screen-home');
     };
     $('resultBtn').onclick = function () {
-      var main = document.querySelector('.board.main'); if (main) main.classList.remove('spectating');
-      G.spectating = null; G.dead = false;
-      $('battle').classList.remove('dead');
+      Spectate.reset(); G.dead = false;
       $('result').className = '';
       showScreen('screen-home');
     };
@@ -713,26 +774,52 @@
     // 被淘汰蒙层按钮
     $('elimSpectate').onclick = function () {
       $('eliminated').classList.remove('on');
-      // 默认观战：下一个存活对手（跳过自己）
+      // 默认观战：第一个存活对手（跳过自己）
       var cand = [];
       for (var i = 0; i < G.alive.length; i++) if (G.alive[i] !== G.mySeat) cand.push(G.alive[i]);
-      if (cand.length) enterSpectate(cand[0]);
+      if (cand.length) Spectate.enter(cand[0]);
       else toast('暂无其他对手可观战');
     };
     $('elimHome').onclick = function () {
       $('eliminated').classList.remove('on');
       if (G.syncTimer) { clearInterval(G.syncTimer); G.syncTimer = null; }
-      var main = document.querySelector('.board.main'); if (main) main.classList.remove('spectating');
-      G.spectating = null; G.dead = false;
-      $('battle').classList.remove('dead');
+      Spectate.reset(); G.dead = false;
       G.net.send({ t: 'leave' });
       G.started = false; G.over = true; G.game = null;
       showScreen('screen-home');
     };
 
     global.addEventListener('resize', function () {
-      if (G.started && !G.over) { layoutThumbs(); if (G.spectating != null) { specRenderer = null; setupSpectateRenderer(); renderSpectate(G.spectating); } }
+      if (G.started && !G.over) {
+        layoutThumbs();
+        if (Spectate.active) { Spectate.renderer = null; Spectate.ensureSetup(); Spectate.render(); }   // 重新测量观战画布
+      }
     });
+
+    // ── 观战切换：以「坐标几何命中」统一派发，彻底绕开层叠/事件目标异常 ──
+    // 实测某些移动端环境下，点击缩略图时 event.target 落在 #app 而非缩略图，
+    // 导致直接挂在其上的监听器收不到事件。改用挂在 #app 上的统一处理器，
+    // 用 clientX/clientY 与缩略图真实 getBoundingClientRect() 判定点了哪个对手。
+    var appEl = $('app');
+    if (appEl) {
+      appEl.addEventListener('click', function (e) {
+        if (!G.dead && !Spectate.active) return;        // 仅被淘汰后 / 已在观战中时可切换
+        var elim = $('eliminated');
+        if (elim && elim.classList.contains('on')) return;   // 蒙层仍显示时，让蒙层按钮正常工作
+        if (!G.thumbs || !G.seats) return;
+        var x = e.clientX, y = e.clientY;
+        for (var s in G.thumbs) {
+          if (!G.thumbs.hasOwnProperty(s)) continue;
+          var seat = parseInt(s, 10);
+          if (seat === G.mySeat || !G.seats[seat]) continue;
+          var r = G.thumbs[seat].wrap.getBoundingClientRect();
+          if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+            Spectate.enter(seat);
+            return;
+          }
+        }
+      });
+    }
 
     connectNet();
 
