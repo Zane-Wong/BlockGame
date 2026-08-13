@@ -946,7 +946,11 @@
     };
 
     $('goCreate').onclick = function () { G.count = 4; $('cCount').textContent = 4; showScreen('screen-count'); };
-    $('goJoin').onclick = function () { $('joinCode').value = ''; showScreen('screen-join'); };
+    $('goJoin').onclick = function () { $('joinCode').value = ''; showScreen('screen-join'); };$('returnMenu').onclick = function () {
+      // 离开当前房间/对战（若仍在），再回到真正的应用主菜单（index.html 单机/联机选择页）
+      try { if (G.net) G.net.send({ t: 'leave' }); } catch (e) {}
+      location.href = 'index.html';
+    };
     $('cMinus').onclick = function () { G.count = Math.max(2, G.count - 1); $('cCount').textContent = G.count; };
     $('cPlus').onclick = function () { G.count = Math.min(9, G.count + 1); $('cCount').textContent = G.count; };
     $('doCreate').onclick = function () { G.net.send({ t: 'create', count: G.count, fp: G.fp, name: ME ? ME.name : '', avatar: ME ? ME.avatar : '' }); };
