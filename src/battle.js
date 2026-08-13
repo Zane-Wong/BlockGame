@@ -104,6 +104,7 @@
     G.myPauseUsed = false; G.pauseActive = false;       // 新一局：重置暂停机会与状态
     G.pauseUnlockAt = Date.now() + PAUSE_GRACE_MS;      // 开局 30s 内禁用暂停（防开局秒暂停）
     hidePauseMask();
+    stopConfetti();                                    // 保险：新一局清掉残留礼花
     Spectate.reset();                                  // 清理上一局残留的观战状态
     G.lastBoard = {}; G.lastPiece = {}; G.peers = {};
     G.alive = [];
@@ -762,6 +763,121 @@
   }
 
   /* ===================== 结算 ===================== */
+  /* ===================== 胜利礼花 ===================== */
+  /* 零依赖 canvas 礼花：VICTORY 时彩色纸屑 + 🎉🎊✨ 飘落。仅在胜利触发。 */
+  var confettiRAF = null, confettiCanvas = null, confettiCtx = null, confettiParts = [], confettiResize = null;
+  var confettiSprites = { rect: {}, emoji: {} }, confettiDPR = 1;
+  var CONFETTI_COLORS = ['#ffd84d', '#7c5cf5', '#4ac2d8', '#ff6b6b', '#5fd6ea', '#ffa94d'];
+  var CONFETTI_EMOJI = ['🎉', '🎊', '✨', '⭐'];
+
+  function sizeConfetti() {
+    if (!confettiCanvas) return;
+    confettiDPR = Math.min(2, window.devicePixelRatio || 1);   // DPR 上限 2：避免 3x 屏 9 倍像素填充
+    confettiCanvas.width = Math.max(1, confettiCanvas.clientWidth * confettiDPR);
+    confettiCanvas.height = Math.max(1, confettiCanvas.clientHeight * confettiDPR);
+    if (confettiCtx) confettiCtx.setTransform(confettiDPR, 0, 0, confettiDPR, 0, 0);
+  }
+
+  /* 离屏 sprite 预渲染：emoji / 色块各只画一次，之后每帧仅 drawImage（远快于 fillText） */
+  function makeSprite(base, draw) {
+    var c = document.createElement('canvas');
+    c.width = Math.ceil(base * confettiDPR);
+    c.height = Math.ceil(base * confettiDPR);
+    var cx = c.getContext('2d');
+    cx.scale(confettiDPR, confettiDPR);
+    draw(cx, base);
+    return c;
+  }
+  function rectSprite(color) {
+    if (!confettiSprites.rect[color]) {
+      confettiSprites.rect[color] = makeSprite(14, function (cx, s) {
+        cx.fillStyle = color;
+        cx.fillRect(0, 0, s, s * 0.6);
+      });
+    }
+    return confettiSprites.rect[color];
+  }
+  function emojiSprite(ch) {
+    if (!confettiSprites.emoji[ch]) {
+      confettiSprites.emoji[ch] = makeSprite(28, function (cx, s) {
+        cx.font = (s * 0.82) + 'px serif';
+        cx.textAlign = 'center';
+        cx.textBaseline = 'middle';
+        cx.fillText(ch, s / 2, s / 2);
+      });
+    }
+    return confettiSprites.emoji[ch];
+  }
+
+  function spawnConfetti(initial) {
+    if (!confettiCanvas) return null;
+    var W = confettiCanvas.clientWidth, H = confettiCanvas.clientHeight;
+    var isEmoji = Math.random() < 0.18;
+    var size = isEmoji ? (16 + Math.random() * 12) : (5 + Math.random() * 7);
+    return {
+      x: Math.random() * W,
+      y: initial ? (Math.random() * H * 0.5) : (-20 - Math.random() * H * 0.25),
+      vx: (Math.random() - 0.5) * 2.4,
+      vy: 1.4 + Math.random() * 3,
+      rot: Math.random() * Math.PI * 2,
+      vr: (Math.random() - 0.5) * 0.32,
+      w: size,
+      h: isEmoji ? size : size * 0.6,
+      emoji: isEmoji ? CONFETTI_EMOJI[(Math.random() * CONFETTI_EMOJI.length) | 0] : null,
+      color: CONFETTI_COLORS[(Math.random() * CONFETTI_COLORS.length) | 0]
+    };
+  }
+
+  function startConfetti() {
+    confettiCanvas = $('confetti');
+    if (!confettiCanvas || !confettiCanvas.getContext) return;
+    confettiCtx = confettiCanvas.getContext('2d');
+    confettiSprites = { rect: {}, emoji: {} };        // 重新预渲染（DPR 可能已变）
+    sizeConfetti();
+    confettiParts = [];
+    for (var i = 0; i < 140; i++) { var s = spawnConfetti(true); if (s) confettiParts.push(s); }
+    if (confettiRAF) cancelAnimationFrame(confettiRAF);
+    var last = performance.now();
+    function frame(now) {
+      var dt = Math.min(40, now - last); last = now;
+      if (!confettiCtx || !confettiCanvas) return;
+      var H = confettiCanvas.clientHeight;
+      var W = confettiCanvas.clientWidth;
+      confettiCtx.clearRect(0, 0, W, H);
+      var dpr = confettiDPR, cos, sin;
+      for (var i = 0; i < confettiParts.length; i++) {
+        var p = confettiParts[i];
+        p.x += p.vx * (dt * 0.06);
+        p.vy += 0.0016 * dt;                          // 轻微重力
+        p.y += p.vy * (dt * 0.06);
+        p.rot += p.vr;
+        var spr = p.emoji ? emojiSprite(p.emoji) : rectSprite(p.color);
+        cos = Math.cos(p.rot); sin = Math.sin(p.rot);
+        // 用 setTransform 直接摆好旋转矩阵（免去 save/restore 开销）
+        confettiCtx.setTransform(cos * dpr, sin * dpr, -sin * dpr, cos * dpr, p.x * dpr, p.y * dpr);
+        confettiCtx.drawImage(spr, -p.w / 2, -p.h / 2, p.w, p.h);
+      }
+      confettiCtx.setTransform(dpr, 0, 0, dpr, 0, 0);  // 复位
+      // 落出屏幕的回收；并持续补充，保持飘落
+      confettiParts = confettiParts.filter(function (p) { return p.y < H + 40; });
+      while (confettiParts.length < 140) { var sp = spawnConfetti(false); if (sp) confettiParts.push(sp); }
+      confettiRAF = requestAnimationFrame(frame);
+    }
+    confettiRAF = requestAnimationFrame(frame);
+    if (!confettiResize) {
+      confettiResize = function () { sizeConfetti(); };
+      window.addEventListener('resize', confettiResize);
+    }
+  }
+
+  function stopConfetti() {
+    if (confettiRAF) cancelAnimationFrame(confettiRAF);
+    confettiRAF = null;
+    if (confettiCtx && confettiCanvas) confettiCtx.clearRect(0, 0, confettiCanvas.clientWidth, confettiCanvas.clientHeight);
+    confettiParts = [];
+    if (confettiResize) { window.removeEventListener('resize', confettiResize); confettiResize = null; }
+  }
+
   function showResult(win, ranking) {
     var ov = $('result');
     ov.className = 'on ' + (win ? 'win' : 'lose');
@@ -785,6 +901,7 @@
         '<span class="rk-stat">' + (p.score || 0) + '分 · ' + (p.lines || 0) + '行</span>';
       listEl.appendChild(row);
     }
+    if (win) startConfetti(); else stopConfetti();   // 仅胜利者结算触发礼花
   }
 
   /* 服务器未带排行时的兜底：按当前存活状态 + 分数排序 */
@@ -865,6 +982,7 @@
       Spectate.reset(); G.dead = false;
       G.myPauseUsed = false; G.pauseActive = false; hidePauseMask();
       clearPauseBtnTimer();
+      stopConfetti();                                  // 关闭胜利礼花动画
       $('result').className = '';
       showScreen('screen-home');
     };
