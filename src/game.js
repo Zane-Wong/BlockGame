@@ -44,6 +44,7 @@
     this.renderer = new TZ.Renderer(this.ctx, this.layout);
 
     this.state = STATE.READY;
+    this.frozen = false;                 // 联机对战暂停：冻结整局（重力/动画/手势全部停摆）
     this.piece = null;
     this.score = 0;
     this.lines = 0;
@@ -239,6 +240,7 @@
   Game.prototype.start = function () {
     this.board = new TZ.Board();
     this.bag = new TZ.Bag();
+    this.frozen = false;                 // 重开时解除可能的遗留冻结（如上一局暂停中退出）
     this.score = 0; this.lines = 0; this.level = 0; this.combo = -1;
     this.dropAcc = 0; this.lockTimer = 0; this.lockResets = 0; this.grounded = false;
     this.navTarget = null; this.navQueue = null; this.launch = null; this.clearInfo = null;
@@ -511,6 +513,7 @@
 
   /* ---------- 主循环 ---------- */
   Game.prototype.update = function (dt) {
+    if (this.frozen) return;             // 联机暂停：整局冻结，仅主循环仍重绘静止帧
     this.time += dt;
     this.gesture.tick(dt);
     this.particles.update();
@@ -647,6 +650,29 @@
   Game.prototype.stop = function () {
     this._stopped = true;
     this.state = STATE.OVER;
+  };
+
+  /* 联机对战暂停：冻结/解冻整局（重力、动画、手势全部停摆，主循环仍重绘静止帧）。
+   * 与 stop() 不同——stop() 会永久终止主循环；setFrozen 只是暂停，解冻后可继续。 */
+  Game.prototype.setFrozen = function (v) {
+    this.frozen = !!v;
+  };
+
+  /* 退出本局游戏、返回主菜单（单机模式）。
+     清空当前局状态并回到 READY；不调用 stop()——stop() 会永久终止主循环，
+     仅用于联机对战终局冻结。回到主菜单后点「单机模式 / 再来一局」仍由 start() 正常重开。 */
+  Game.prototype.quitToMenu = function () {
+    this.piece = null;
+    this.state = STATE.READY;
+    this.clearInfo = null;
+    this.launch = null;
+    this.navTarget = null;
+    this.navQueue = null;
+    this.rotFx = null;
+    this.particles.clear();
+    this.floaters.clear();
+    if (this.gesture && this.gesture.reset) this.gesture.reset();
+    this.ui.showStart();
   };
 
   Game.STATE = STATE;

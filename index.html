@@ -111,6 +111,17 @@
     cursor: pointer; font-family: inherit; letter-spacing: .05em;
   }
   .cta:active { opacity: .85; }
+  /* 主菜单模式选择：单机 / 联机 双按钮 */
+  .cta.online { background: linear-gradient(135deg, #2f9bd6, #4ac2d8); }
+  .cta-row { display: flex; flex-direction: column; gap: 12px; align-items: center; width: 100%; max-width: 280px; margin-top: 2px; }
+  .cta-row .cta { width: 100%; }
+  /* 模态窗内多按钮竖排（暂停 / 结算） */
+  .cta-stack { display: flex; flex-direction: column; gap: 12px; align-items: center; width: 100%; max-width: 280px; margin-top: 4px; }
+  .cta-stack .cta { width: 100%; }
+  /* 次按钮（退出本局 / 返回主界面）：低调描边样式 */
+  .cta.ghost { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.72); box-shadow: none; }
+  .cta.ghost:active { background: rgba(255,255,255,0.14); opacity: 1; }
+  .mode-tip { font-size: 11px; color: rgba(255,255,255,0.42); letter-spacing: .04em; margin-top: 2px; text-align: center; line-height: 1.5; }
   .final { display: flex; gap: 26px; margin-bottom: 22px; }
   .final div { text-align: center; }
   .final .fk { font-size: 10px; color: rgba(255,255,255,0.4); letter-spacing: .12em; }
@@ -282,12 +293,20 @@
       overlay.innerHTML =
         '<h1>魔方坠落</h1><div class="sub">GESTURE TETRIS</div>' +
         '<div class="guide">' + rows + '</div>' +
-        '<button class="cta" id="cta">开始游戏</button>';
+        '<div class="cta-row">' +
+          '<button class="cta" id="cta-solo">单机模式</button>' +
+          '<button class="cta online" id="cta-online">联机对战</button>' +
+          '<div class="mode-tip">联机对战需连接服务器 · 与好友实时对决</div>' +
+        '</div>';
       overlay.classList.remove('hidden');
-      document.getElementById('cta').onclick = function () {
+      document.getElementById('cta-solo').onclick = function () {
         // 首次进入且未完成教程 → 先走新手引导；否则直接开局
         if (game.tutorial && !TZ.Tutorial.isDone()) game.tutorial.start();
         else game.start();
+      };
+      document.getElementById('cta-online').onclick = function () {
+        // 跳转到联机对战页面（server/index.js 已将 /battle 与 /battle.html 映射到 battle.html）
+        location.href = 'battle.html';
       };
     },
 
@@ -325,9 +344,13 @@
     },
     showPause: function () {
       overlay.innerHTML = '<h1>已暂停</h1><div class="sub">PAUSED</div>' +
-        '<button class="cta" id="cta">继续</button>' + SIGN;
+        '<div class="cta-stack">' +
+          '<button class="cta" id="cta-resume">继续</button>' +
+          '<button class="cta ghost" id="cta-quit">退出本局游戏</button>' +
+        '</div>' + SIGN;
       overlay.classList.remove('hidden');
-      document.getElementById('cta').onclick = function () { game.togglePause(); };
+      document.getElementById('cta-resume').onclick = function () { game.togglePause(); };
+      document.getElementById('cta-quit').onclick = function () { game.quitToMenu(); };
     },
     showOver: function (score, lines, best) {
       var isNew = score >= best && score > 0;
@@ -338,9 +361,13 @@
         '<div><div class="fk">SCORE</div><div class="fv' + (isNew ? ' gold' : '') + '">' + score + '</div></div>' +
         '<div><div class="fk">LINES</div><div class="fv">' + lines + '</div></div>' +
         '<div><div class="fk">BEST</div><div class="fv">' + best + '</div></div>' +
-        '</div><button class="cta" id="cta">再来一局</button>' + SIGN;
+        '</div><div class="cta-stack">' +
+          '<button class="cta" id="cta-again">再来一局</button>' +
+          '<button class="cta ghost" id="cta-home">返回主界面</button>' +
+        '</div>' + SIGN;
       overlay.classList.remove('hidden');
-      document.getElementById('cta').onclick = function () { game.start(); };
+      document.getElementById('cta-again').onclick = function () { game.start(); };
+      document.getElementById('cta-home').onclick = function () { game.quitToMenu(); };
     }
   };
 
