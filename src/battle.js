@@ -11,6 +11,9 @@
   'use strict';
   var TZ = global.TZ;
 
+  /* 开局前 N 毫秒内禁用「暂停」按钮（防止开局秒暂停），到点自动解锁 */
+  var PAUSE_GRACE_MS = 30000;
+
   /* ===================== 账号：浏览器指纹 ===================== */
   var FP_KEY = 'tz_fp', PROF_KEY = 'tz_profile';
   function getFP() {
@@ -33,6 +36,11 @@
     started: false, over: false,
     dead: false,               // 本地玩家是否已被淘汰
     killedBy: null,            // 淘汰我的对手座位号（客户端侧记录）
+    myPauseUsed: false,        // 本局我是否已用过暂停（每位仅一次）
+    pauseActive: false,        // 当前是否有暂停进行中（任意玩家发起）
+    pauseTimer: null,          // 暂停倒计时刷新定时器
+    pauseUnlockAt: 0,          // 暂停按钮解锁时间戳（开局 30s 后才可用）
+    pauseBtnTimer: null,       // 解锁倒计时刷新定时器
     game: null, syncTimer: null,
     thumbs: {},                // seat -> {wrap, cv, ctx, dpr, renderer}
     lastBoard: {},             // seat -> 最近一次快照的棋盘 packed（HUD 排名用）
@@ -73,6 +81,8 @@
     G.net.on('attack', onAttack);
     G.net.on('dead', onDead);
     G.net.on('over', onOver);
+    G.net.on('paused', onPaused);
+    G.net.on('resume', onResume);
     G.net.on('error', function (m) { toast(m.msg || '出错了'); });
     G.net.connect();
   }
@@ -91,6 +101,9 @@
   function onStart(m) {
     G.started = true; G.over = false;
     G.dead = false; G.killedBy = null;
+    G.myPauseUsed = false; G.pauseActive = false;       // 新一局：重置暂停机会与状态
+    G.pauseUnlockAt = Date.now() + PAUSE_GRACE_MS;      // 开局 30s 内禁用暂停（防开局秒暂停）
+    hidePauseMask();
     Spectate.reset();                                  // 清理上一局残留的观战状态
     G.lastBoard = {}; G.lastPiece = {}; G.peers = {};
     G.alive = [];
@@ -108,6 +121,8 @@
       });
     });
     toast('对战开始！');
+    updatePauseBtn();          // ← 关键修复：开局即刷新按钮状态（否则一直停留在初始 disabled）
+    schedulePauseUnlock();     // 30s 后自动解锁暂停按钮
   }
 
   function onSnapshot(m) {
@@ -158,6 +173,8 @@
       G.dead = true;
       if (G.syncTimer) { clearInterval(G.syncTimer); G.syncTimer = null; }
       if (G.game && G.game.stop) G.game.stop();   // 冻结本地棋盘，主棋盘随即被淘汰蒙层覆盖
+      clearPauseBtnTimer();
+      updatePauseBtn();                            // 出局后禁用暂停按钮
       var killer = (G.killedBy != null) ? G.killedBy : m.by;
       showEliminated(killer);
     }
@@ -165,11 +182,84 @@
 
   function onOver(m) {
     G.over = true;
+    clearPauseBtnTimer();
     if (G.syncTimer) { clearInterval(G.syncTimer); G.syncTimer = null; }
     if (G.game && G.game.stop) G.game.stop();          // 冻结本地棋盘，避免结算时棋盘仍在落块
     Spectate.reset();                                  // 关闭观战视图与高亮、隐藏 HUD 标识
+    hidePauseMask();                                   // 兜底关闭遗留暂停蒙层
     var el = $('eliminated'); if (el) el.classList.remove('on');
     showResult(m.winner === G.mySeat, m.ranking);
+  }
+
+  /* ===================== 联机暂停 ===================== */
+  /* 任一玩家发起暂停：所有玩家方块冻结 + 显示蒙版与倒计时；服务器权威计时。 */
+  function onPaused(m) {
+    if (G.over) return;
+    G.pauseActive = true;
+    if (m.by === G.mySeat) G.myPauseUsed = true;       // 我自己发起 → 本局暂停机会已用掉
+    var who = (G.seats[m.by] ? G.seats[m.by].name : (m.name || '玩家'));
+    var ava = (G.seats[m.by] && G.seats[m.by].avatar) ? G.seats[m.by].avatar : (m.avatar || '');
+    var whoEl = $('pauseWho'); if (whoEl) whoEl.textContent = (ava ? ava + ' ' : '') + who;
+    var mask = $('pauseMask'); if (mask) mask.classList.add('on');
+    if (G.game && G.game.setFrozen) G.game.setFrozen(true);   // 冻结本地棋盘（重力/动画/手势停摆）
+    updatePauseBtn();
+    startPauseCountdown(m.until, m.dur || 30000);
+  }
+
+  function startPauseCountdown(until, dur) {
+    if (G.pauseTimer) clearInterval(G.pauseTimer);
+    var countEl = $('pauseCount');
+    // 以服务器 until 为准；时钟异常时回退到本地 30s 时长
+    var base = (until && until > Date.now() && until < Date.now() + (dur || 30000) + 10000)
+      ? until : (Date.now() + (dur || 30000));
+    function tickCount() {
+      var rem = base - Date.now();
+      var sec = (rem > 0) ? Math.max(0, Math.ceil(rem / 1000)) : 0;
+      if (countEl) countEl.textContent = sec > 0 ? sec : '继续…';
+      if (sec <= 0) { clearInterval(G.pauseTimer); G.pauseTimer = null; }
+    }
+    tickCount();
+    G.pauseTimer = setInterval(tickCount, 200);
+  }
+
+  function onResume() {
+    hidePauseMask();
+    if (G.game && G.game.setFrozen) G.game.setFrozen(false);   // 解冻本地棋盘，方块继续下落
+    G.pauseActive = false;
+    updatePauseBtn();
+  }
+
+  function hidePauseMask() {
+    if (G.pauseTimer) { clearInterval(G.pauseTimer); G.pauseTimer = null; }
+    var mask = $('pauseMask'); if (mask) mask.classList.remove('on');
+  }
+
+  /* 暂停按钮可用性：
+   *  - 对局中 + 未出局 + 无进行中暂停 + 本局未用过
+   *  - 且需过「开局 30s 冷却期」（PAUSE_GRACE_MS）后才解锁
+   * 冷却期内显示剩余秒数；用过一次后本局永久禁用。 */
+  function updatePauseBtn() {
+    var b = $('pauseBtn'); if (!b) return;
+    var unlocked = Date.now() >= G.pauseUnlockAt;
+    var can = G.started && !G.over && !G.dead && !G.pauseActive && !G.myPauseUsed && unlocked;
+    b.disabled = !can;
+    if (G.myPauseUsed) b.textContent = '已用过暂停';
+    else if (!unlocked) b.textContent = '暂停(' + Math.max(0, Math.ceil((G.pauseUnlockAt - Date.now()) / 1000)) + 's)';
+    else b.textContent = '暂停';
+  }
+
+  /* 开局前 30s：按钮置灰并显示剩余秒数；到点自动解锁 */
+  function schedulePauseUnlock() {
+    clearPauseBtnTimer();
+    if (!G.started || G.over) { updatePauseBtn(); return; }
+    if (Date.now() >= G.pauseUnlockAt) { updatePauseBtn(); return; }
+    G.pauseBtnTimer = setInterval(function () {
+      if (G.over || Date.now() >= G.pauseUnlockAt) clearPauseBtnTimer();
+      updatePauseBtn();
+    }, 300);
+  }
+  function clearPauseBtnTimer() {
+    if (G.pauseBtnTimer) { clearInterval(G.pauseBtnTimer); G.pauseBtnTimer = null; }
   }
 
   /* ===================== 房间界面 ===================== */
@@ -761,12 +851,20 @@
     $('backHome').onclick = function () {
       if (G.syncTimer) { clearInterval(G.syncTimer); G.syncTimer = null; }
       Spectate.reset(); G.dead = false;
+      G.myPauseUsed = false; G.pauseActive = false; hidePauseMask();
+      clearPauseBtnTimer();
       G.net.send({ t: 'leave' });
       G.started = false; G.over = true; G.game = null;
       showScreen('screen-home');
     };
+    $('pauseBtn').onclick = function () {
+      if (!G.started || G.over || G.dead || G.pauseActive || G.myPauseUsed) return;
+      G.net.send({ t: 'pause' });
+    };
     $('resultBtn').onclick = function () {
       Spectate.reset(); G.dead = false;
+      G.myPauseUsed = false; G.pauseActive = false; hidePauseMask();
+      clearPauseBtnTimer();
       $('result').className = '';
       showScreen('screen-home');
     };
@@ -784,6 +882,8 @@
       $('eliminated').classList.remove('on');
       if (G.syncTimer) { clearInterval(G.syncTimer); G.syncTimer = null; }
       Spectate.reset(); G.dead = false;
+      G.myPauseUsed = false; G.pauseActive = false; hidePauseMask();
+      clearPauseBtnTimer();
       G.net.send({ t: 'leave' });
       G.started = false; G.over = true; G.game = null;
       showScreen('screen-home');
@@ -840,4 +940,7 @@
   else boot();
 
   TZ.Battle = G;
+
+  // 初始禁用暂停按钮（未开局前不可用）
+  updatePauseBtn();
 })(typeof window !== 'undefined' ? window : this);

@@ -25,6 +25,9 @@ function Room(code, count) {
   this.hostSeat = 0;
   this.botSeq = 0;                          // 机器人命名序号
   this.deathOrder = [];                     // 淘汰顺序（座位号，先出局者在前）
+  this.pauseUsed = [];                      // 每位是否已使用过暂停（一次机会）
+  this.pause = null;                        // 当前暂停态 {active, by, until}，无则 null
+  this._pauseTimer = null;                  // 暂停倒计时定时器
 }
 
 Room.prototype.findSeatOf = function (fp) {
@@ -115,6 +118,10 @@ Room.prototype.isFull = function () {
 Room.prototype.start = function () {
   if (this.started) return false;
   if (!this.isFull()) this.fillBots();   // 人数不足：机器人自动补位，保证可开局
+  // 重置本局暂停状态（每位一次机会）
+  this.pauseUsed = new Array(this.seats.length).fill(false);
+  this.pause = null;
+  if (this._pauseTimer) { clearTimeout(this._pauseTimer); this._pauseTimer = null; }
   this.started = true;
   var order = [];
   for (var i = 0; i < this.seats.length; i++) order.push(i);
@@ -156,6 +163,8 @@ Room.prototype.checkWin = function () {
   }
   if (alive.length <= 1) {
     this.started = false;            // 终局：停掉机器人循环与快照广播，避免「已结算却仍在跑」
+    if (this._pauseTimer) { clearTimeout(this._pauseTimer); this._pauseTimer = null; }
+    this.pause = null;               // 终局清空暂停态，避免遗留倒计时误触发 resume
     return { over: true, winner: alive.length === 1 ? alive[0] : -1 };
   }
   return { over: false, winner: -1 };

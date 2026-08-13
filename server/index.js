@@ -21,6 +21,10 @@ var BotEngine = require('./botengine.js').BotEngine;
 var ROOT = path.resolve(__dirname, '..');
 var PORT = parseInt(process.env.PORT, 10) || 8080;
 
+/* 联机暂停时长（毫秒）。默认 30 秒；可用环境变量 PR_PAUSE_MS 覆盖（测试时调小以加速验证）。 */
+var PR_PAUSE_MS = parseInt(process.env.PR_PAUSE_MS, 10);
+if (!(PR_PAUSE_MS >= 1000)) PR_PAUSE_MS = 30000;
+
 var mgr = new RoomManager();
 var clients = new Set();           // 所有连接
 var dirtyRooms = new Set();        // 待推送快照的房间
@@ -46,6 +50,12 @@ function roomHasHuman(room) {
     if (s && !s.bot) return true;
   }
   return false;
+}
+
+/* 清空房间的暂停定时器与暂停态（房间解散时调用，避免遗留定时器误触发 resume） */
+function clearRoomPause(room) {
+  if (room && room._pauseTimer) { clearTimeout(room._pauseTimer); room._pauseTimer = null; }
+  if (room) room.pause = null;
 }
 
 /* 统一结算一次攻击：广播 attack，并对「机器人受害者」真实累固化块 / 判负。
@@ -83,7 +93,7 @@ function leave(conn) {
       var res = room.checkWin();
       broadcast(room, { t: 'dead', seat: r.seat });
       if (res.over) broadcast(room, { t: 'over', winner: res.winner, ranking: room.buildRanking(res.winner) });
-      if (!roomHasHuman(room)) mgr.drop(room.code);   // 没有真实玩家 → 散场（避免机器人空转）
+      if (!roomHasHuman(room)) { clearRoomPause(room); mgr.drop(room.code); }   // 没有真实玩家 → 散场（避免机器人空转）
   } else {
     // 房主离开 → 转让给首个仍在的真实玩家（跳过机器人）
     if (wasHost) {
@@ -206,6 +216,30 @@ function handle(conn, msg) {
       conn.send({ t: 'pong', t: msg.t });
       break;
 
+    /* 联机暂停：每位玩家本局仅一次机会；发起后所有玩家方块冻结并显示蒙版 + 30s 倒计时。
+     * 由服务器权威计时，倒计时结束广播 resume 解除冻结。同一时刻只允许一个暂停进行。 */
+    case 'pause': {
+      var pr = mgr.get(conn.roomCode);
+      if (!pr || !pr.started) return;
+      var seat = pr.findSeatOf(conn.fp);
+      if (seat < 0) return;
+      if (!pr.seats[seat].alive) { conn.send({ t: 'error', msg: '你已出局，无法暂停' }); return; }
+      if (pr.pauseUsed[seat]) { conn.send({ t: 'error', msg: '本局你已使用过暂停' }); return; }
+      if (pr.pause && pr.pause.active) { conn.send({ t: 'error', msg: '当前已有玩家暂停中' }); return; }
+      pr.pauseUsed[seat] = true;
+      var until = Date.now() + PR_PAUSE_MS;
+      pr.pause = { active: true, by: seat, until: until };
+      var ps = pr.seats[seat];
+      broadcast(pr, { t: 'paused', by: seat, name: ps.name, avatar: ps.avatar, until: until, dur: PR_PAUSE_MS });
+      pr._pauseTimer = setTimeout(function () {
+        pr.pause = null;
+        pr._pauseTimer = null;
+        broadcast(pr, { t: 'resume' });
+      }, PR_PAUSE_MS);
+      console.log('[pause] %s seat=%d until=%d', pr.code, seat, until);
+      break;
+    }
+
     case 'leave':
       leave(conn);
       break;
@@ -235,9 +269,10 @@ if (!(BOT_TICK_MS >= 50)) BOT_TICK_MS = 200;
 var BOT_STEPS_PER_TICK = parseInt(process.env.BOT_STEPS_PER_TICK, 10);
 if (!(BOT_STEPS_PER_TICK >= 1)) BOT_STEPS_PER_TICK = 1;
 setInterval(function () {
-  for (var code in mgr.rooms) {
+    for (var code in mgr.rooms) {
     var room = mgr.rooms[code];
     if (!room || !room.started) continue;
+    if (room.pause && room.pause.active) continue;   // 暂停期间冻结所有机器人推进
     var dirty = false;
     for (var i = 0; i < room.seats.length; i++) {
       var s = room.seats[i];
