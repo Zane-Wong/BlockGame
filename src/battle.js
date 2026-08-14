@@ -38,6 +38,7 @@
     killedBy: null,            // 淘汰我的对手座位号（客户端侧记录）
     myPauseUsed: false,        // 本局我是否已用过暂停（每位仅一次）
     pauseActive: false,        // 当前是否有暂停进行中（任意玩家发起）
+    pauseBy: -1,               // 当前暂停的发起者座位（用于「取消暂停」按钮可见性）
     pauseTimer: null,          // 暂停倒计时刷新定时器
     pauseUnlockAt: 0,          // 暂停按钮解锁时间戳（开局 30s 后才可用）
     pauseBtnTimer: null,       // 解锁倒计时刷新定时器
@@ -101,7 +102,7 @@
   function onStart(m) {
     G.started = true; G.over = false;
     G.dead = false; G.killedBy = null;
-    G.myPauseUsed = false; G.pauseActive = false;       // 新一局：重置暂停机会与状态
+    G.myPauseUsed = false; G.pauseActive = false; G.pauseBy = -1;   // 新一局：重置暂停机会与状态
     G.pauseUnlockAt = Date.now() + PAUSE_GRACE_MS;      // 开局 30s 内禁用暂停（防开局秒暂停）
     hidePauseMask();
     stopConfetti();                                    // 保险：新一局清掉残留礼花
@@ -145,7 +146,18 @@
     if (m.to === G.mySeat && G.game) {
       // 我被攻击：记录攻击者（用于被淘汰时显示"谁淘汰了我"），并在底部插入固化块
       G.killedBy = m.from;
-      var overflow = G.game.board.addCured(m.lines);
+      var shift = m.lines;
+      var overflow = G.game.board.addCured(shift);
+      // 消行闪烁进行中（CLEARING）收到攻击：addCured 通过 grid.shift() 把整盘上移 shift 行，
+      // 待消除行号须同步上移，否则 stepClearing 会清错行 → 固化带上方残留不应有的方块，
+      // 视觉上表现为「分割线错行 / 没及时更新」。
+      if (G.game.clearInfo) {
+        var crows = G.game.clearInfo.rows;
+        for (var _i = 0; _i < crows.length; _i++) {
+          crows[_i] -= shift;            // 物理行号随整盘上移而减小
+          if (crows[_i] < 0) crows[_i] = 0;
+        }
+      }
       G.game.shake.add(10 + m.lines * 4);
       // 联机受击反馈：低沉受击音效 + 较强震动
       if (G.game.audio) G.game.audio.hurt(m.lines);
@@ -197,6 +209,7 @@
   function onPaused(m) {
     if (G.over) return;
     G.pauseActive = true;
+    G.pauseBy = m.by;                                  // 记录发起者，决定「取消暂停」按钮可见性
     if (m.by === G.mySeat) G.myPauseUsed = true;       // 我自己发起 → 本局暂停机会已用掉
     var who = (G.seats[m.by] ? G.seats[m.by].name : (m.name || '玩家'));
     var ava = (G.seats[m.by] && G.seats[m.by].avatar) ? G.seats[m.by].avatar : (m.avatar || '');
@@ -204,6 +217,8 @@
     var mask = $('pauseMask'); if (mask) mask.classList.add('on');
     if (G.game && G.game.setFrozen) G.game.setFrozen(true);   // 冻结本地棋盘（重力/动画/手势停摆）
     updatePauseBtn();
+    // 「取消暂停」按钮：仅发起者本人可见（本人可提前结束这次暂停）
+    var cb = $('cancelPauseBtn'); if (cb) cb.style.display = (m.by === G.mySeat) ? '' : 'none';
     startPauseCountdown(m.until, m.dur || 30000);
   }
 
@@ -227,11 +242,14 @@
     hidePauseMask();
     if (G.game && G.game.setFrozen) G.game.setFrozen(false);   // 解冻本地棋盘，方块继续下落
     G.pauseActive = false;
+    G.pauseBy = -1;
     updatePauseBtn();
   }
 
   function hidePauseMask() {
     if (G.pauseTimer) { clearInterval(G.pauseTimer); G.pauseTimer = null; }
+    G.pauseBy = -1;
+    var cb = $('cancelPauseBtn'); if (cb) cb.style.display = 'none';
     var mask = $('pauseMask'); if (mask) mask.classList.remove('on');
   }
 
@@ -631,6 +649,7 @@
     /* 彻底停止观战（不弹蒙层）：游戏结束 / 返回首页 */
     reset: function () {
       this.active = false; this.target = null;
+      this.renderer = null; this.ctx = null;   // 关键：丢弃旧画布 ctx，否则重开一局后 #spectateCanvas 被重建，ensureSetup 会因 renderer 仍为真而跳过测量 → 观战画到已移除的旧画布（空白/不渲染）
       this.stopLoop();
       var main = document.querySelector('.board.main');
       if (main) main.classList.remove('spectating');
@@ -655,9 +674,11 @@
     },
 
     ensureSetup: function () {
-      if (this.renderer) return true;
       var cv = $('spectateCanvas');
       if (!cv) return false;
+      // 若画布被重建（重开一局 / 返回房间后再玩），旧 renderer 指向已移除的画布，必须丢弃重建
+      if (this.renderer && this._cv !== cv) { this.renderer = null; this.ctx = null; }
+      if (this.renderer) return true;
       // 强制浏览器同步回流：display:none→flex 后 clientWidth 可能仍为 0
       var rect = cv.getBoundingClientRect();
       var cssW = rect.width || cv.clientWidth, cssH = rect.height || cv.clientHeight;
@@ -668,6 +689,7 @@
       if (cell < 2) return false;
       var offX = Math.floor((cssW - cell * 10) / 2), offY = Math.floor((cssH - cell * 20) / 2);
       this.ctx = cv.getContext('2d');
+      this._cv = cv;
       this.renderer = new TZ.Renderer(this.ctx, { x: offX, y: offY, cell: cell, cols: 10, rows: 20, w: cssW, h: cssH });
       return true;
     },
@@ -982,6 +1004,10 @@
       if (!G.started || G.over || G.dead || G.pauseActive || G.myPauseUsed) return;
       G.net.send({ t: 'pause' });
     };
+    $('cancelPauseBtn').onclick = function () {
+      if (!G.pauseActive || G.pauseBy !== G.mySeat) return;   // 仅发起者本人可取消
+      G.net.send({ t: 'cancelpause' });
+    };
     $('resultBtn').onclick = function () {
       Spectate.reset(); G.dead = false;
       G.myPauseUsed = false; G.pauseActive = false; hidePauseMask();
@@ -989,6 +1015,18 @@
       stopConfetti();                                  // 关闭胜利礼花动画
       $('result').className = '';
       showScreen('screen-home');
+    };
+    $('returnRoomBtn').onclick = function () {
+      // 返回房间大厅：不退出房间，房主可再次点「开始对战」重开一局
+      Spectate.reset(); G.dead = false;
+      G.myPauseUsed = false; G.pauseActive = false; G.pauseBy = -1; hidePauseMask();
+      clearPauseBtnTimer();
+      stopConfetti();
+      $('result').className = '';
+      G.started = false; G.over = false; G.game = null;
+      G.net.send({ t: 'getroom' });        // 拉取最新房间状态（host/started 等）
+      renderRoom();                         // 兜底立即切回房间大厅（缓存状态）
+      showScreen('screen-room');
     };
 
     // 被淘汰蒙层按钮

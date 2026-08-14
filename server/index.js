@@ -243,6 +243,30 @@ function handle(conn, msg) {
     case 'leave':
       leave(conn);
       break;
+
+    /* 取消暂停：仅发起本次暂停的玩家本人可取消（提前结束冻结）。
+     * 服务器权威清定时器并广播 resume，所有客户端立即解冻。 */
+    case 'cancelpause': {
+      var cr = mgr.get(conn.roomCode);
+      if (!cr || !cr.started) return;
+      if (!cr.pause || !cr.pause.active) return;
+      var cseat = cr.findSeatOf(conn.fp);
+      if (cseat < 0) return;
+      if (cseat !== cr.pause.by) { conn.send({ t: 'error', msg: '只有发起暂停的玩家可以取消' }); return; }
+      if (cr._pauseTimer) { clearTimeout(cr._pauseTimer); cr._pauseTimer = null; }
+      cr.pause = null;
+      broadcast(cr, { t: 'resume' });
+      console.log('[cancelpause] %s seat=%d', cr.code, cseat);
+      break;
+    }
+
+    /* 请求当前房间状态：结算页「返回房间」时用，服务器回 room 消息让客户端切回房间大厅。 */
+    case 'getroom': {
+      var rr = mgr.get(conn.roomCode);
+      if (!rr) { conn.send({ t: 'error', msg: '房间不存在' }); return; }
+      conn.send({ t: 'room', state: rr.roomState(conn.seat) });
+      break;
+    }
   }
 }
 

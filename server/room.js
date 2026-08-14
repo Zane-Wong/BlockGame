@@ -118,6 +118,20 @@ Room.prototype.isFull = function () {
 Room.prototype.start = function () {
   if (this.started) return false;
   if (!this.isFull()) this.fillBots();   // 人数不足：机器人自动补位，保证可开局
+  // 重开一局：复位上一局残态（结算页「返回房间」再开时，死掉的座位要复活）
+  this.deathOrder = [];
+  for (var i = 0; i < this.seats.length; i++) {
+    var s = this.seats[i];
+    if (!s) continue;
+    s.alive = true;
+    s.lastAttacker = null;
+    if (s.bot && s.engine) {                 // 机器人引擎整局重置（清空棋盘/分数/固化）
+      s.engine = new BotEngine();
+      s.board = s.engine.pack();
+      s.piece = s.engine.pieceNet();
+      s.score = 0; s.lines = 0; s.cured = 0;
+    }
+  }
   // 重置本局暂停状态（每位一次机会）
   this.pauseUsed = new Array(this.seats.length).fill(false);
   this.pause = null;
