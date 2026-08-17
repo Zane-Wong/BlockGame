@@ -210,7 +210,10 @@
         if (self.tutorial && self.tutorial.active) { self.tutorial.onChargeRelease(power); return; }
         self.fire(power);
       },
-      onChargeCancel: function () { }
+      onChargeCancel: function () { },
+      onSoftDrop: function () {
+        self.softDrop();   // 下滑软降：加速方块下落（每格 +1 分，与键盘 ↓ 一致）
+      }
     }, surface);
     this.gesture.attach();
   };

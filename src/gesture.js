@@ -17,11 +17,13 @@
  *
  *   按下 ─┬─ 命中活动方块 ─┬─ 停留 200ms 无位移 ──→ NAVIGATE 落点导航
  *         │                ├─ 横向位移超阈值 ────→ MOVE 逐格横移
- *         │                ├─ 上滑超阈值 ────────→ ROTATE 旋转（轴线左顺时针/右逆时针）
+ *         │                ├─ 上滑超阈值 ────────→ ROTATE 旋转一次（轴线左顺时针/右逆时针，抬手重滑才再转）
+ *         │                ├─ 下滑超阈值 ────────→ SOFTDROP 加速下落（按住持续下落，松手停止）
  *         │                └─ 快速抬起 ──────────→ 轻点旋转（顺时针一次）
  *         └─ 落在空白处 ───┬─ 停留 200ms 无位移 ──→ CHARGE 蓄力弹射
  *                          ├─ 横向位移超阈值 ────→ MOVE（空白处也可横滑，操作面积更大）
- *                          ├─ 上滑超阈值 ────────→ ROTATE
+ *                          ├─ 上滑超阈值 ────────→ ROTATE 旋转一次（抬手重滑才再转）
+ *                          ├─ 下滑超阈值 ────────→ SOFTDROP 加速下落
  *                          └─ 300ms 内二次轻点 ──→ 双击旋转（顺时针一次）
  *
  * CHARGE 是「边蓄力边瞄准」的复合态：力度只由按住时长决定，横向滑动仍逐格
@@ -45,12 +47,12 @@
     HOLD_TOL: 10,        // 长按期间允许的抖动像素
     MOVE_RATIO: 0.55,    // 横移阈值 = 格子宽 * 该系数
     ROT_RATIO: 0.85,     // 首次旋转阈值 = 格子宽 * 该系数，明显高于手指抖动幅度
-    ROT_REPEAT: 1.7,     // 连续旋转所需的「额外」位移，远高于首次，避免一滑连转
-    ROT_BACK: 1.9,       // 回拉反向旋转阈值，最保守，防止抖动来回翻转
-    ROT_COOLDOWN: 260,   // 两次旋转之间的最小间隔（ms），硬性限制触发频次
     ROT_BIAS_SLOPE: 0.35,// 仅当 getPieceCenterX 不可用时（无方块）降级用作「滑动角度」dx/ady 判定
     ROT_LOCK: 1.35,      // 旋转需纵向分量超横向该倍数（收紧，斜滑不再误判为旋转）
     MOVE_LOCK: 1.0,      // 横移只需横向占优即可（放宽，避免与旋转之间出现死区）
+    SOFTDROP_RATIO: 0.7, // 下滑软降阈值 = 格子宽 * 该系数（低于旋转阈值，下滑更易触发）
+    SOFTDROP_LOCK: 1.2,  // 下滑软降需纵向分量超横向该倍数（与横移互斥，斜滑不误判）
+    SOFTDROP_MS: 45,     // 下滑保持期间，每多少毫秒下落一格（加速下落节奏）
     CHARGE_MS: 850,      // 蓄满所需时长
     CHARGE_MOVE: 1.15,   // 蓄力期间横移步长（格）。手指处于按压状态抖动更大，
                          // 比常规横移略钝一点，既能瞄准又不会误触
@@ -73,9 +75,10 @@
    *   onNavUpdate(col)     导航目标列变化
    *   onNavCommit(col)     松手，执行导航
    *   onNavCancel()
-   *   onChargeStart()
-   *   onChargeRelease(power)  power 为 0~1
-   *   onChargeCancel()
+ *   onChargeStart()
+ *   onChargeRelease(power)  power 为 0~1
+ *   onChargeCancel()
+ *   onSoftDrop()            下滑软降：每下落一格触发一次（由 tick 按固定间隔连续调用）
    *   onTapPiece()         轻点方块
    *   onDoubleTap()        空白处双击，一律顺时针(+1)，不区分屏幕左右半区
    *   isBusy()             游戏是否处于不可操作状态
@@ -92,6 +95,7 @@
     this.reset();
     this.charge = 0;
     this.charging = false;
+    this.softDropAcc = 0;   // 下滑软降的时间累加器（由 tick 按固定间隔触发 onSoftDrop）
     // 双击记录必须活过 reset()：reset 在每次按下时调用，
     // 若把它清掉，第二次点击就永远读不到第一次的记录。
     this.lastTapTime = 0;
@@ -114,11 +118,13 @@
     this.grabOffset = 0;     // 抓取点相对方块左上角的列偏移
     this.rotDir = 1;
     this.lastRotTime = 0;    // 上次旋转的时间戳，用于冷却判定
+    this.rotDone = false;    // 本次手势是否已旋转过（一次上滑只转一次，防止「一滑多转」）
     this.navCol = null;
     this.navFollow = false;   // 导航中是否已切到「手指列跟随」
     this.navBaseCol = 0;      // 进入导航时的方块列（= 正下方起点），滑动 = 相对手指按下点的位移
     this.charging = false;
     this.charge = 0;
+    this.softDropAcc = 0;
     this.pending = null;
     if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; }
   };
@@ -288,6 +294,8 @@
       }
 
       // 上滑旋转：纵向明显占优且方向朝上，阈值高于手指抖动幅度。
+      // 一次手势只旋转一次（rotDone 置位后 ROTATE 分支不再重复触发），
+      // 避免出现「手指没离开屏幕却连续多转」的问题。
       if (dy < 0 && ady > cell * P.ROT_RATIO && ady > adx * P.ROT_LOCK) {
         this.mode = 'ROTATE';
         clearTimeout(this.holdTimer);
@@ -295,6 +303,16 @@
         this.h.onRotate(this.rotDir);
         this.anchorY = y;
         this.lastRotTime = t;
+        this.rotDone = true;
+        return;
+      }
+      // 下滑软降：纵向明显占优且方向朝下（与横移互斥，斜滑不会误判为软降）。
+      // 进入后保持按住即可持续加速下落，松手停止（见 tick()）。
+      if (dy > 0 && ady > cell * P.SOFTDROP_RATIO && ady > adx * P.SOFTDROP_LOCK) {
+        this.mode = 'SOFTDROP';
+        clearTimeout(this.holdTimer);
+        this.softDropAcc = 0;
+        this.h.onSoftDrop && this.h.onSoftDrop();   // 立即下落一格，给出即时反馈
         return;
       }
       // 横向移动
@@ -310,21 +328,16 @@
 
     if (this.mode === 'MOVE') { this.stepMove(x, cell); return; }
 
+    if (this.mode === 'SOFTDROP') {
+      // 持续下落由 tick() 按固定间隔触发（即使手指停住不动也保持加速），
+      // 这里不再处理位移，避免与 tick 重复触发。
+      return;
+    }
+
     if (this.mode === 'ROTATE') {
-      // 连续旋转受两道闸门约束：时间冷却 + 明显更大的额外位移。
-      // 这样「一次长滑」最多转一两下，手指抖动完全不会累积触发。
-      if (t - this.lastRotTime < P.ROT_COOLDOWN) return;
-      var up = this.anchorY - y;
-      if (up > cell * P.ROT_REPEAT) {
-        this.h.onRotate(this.rotDir);
-        this.anchorY = y;
-        this.lastRotTime = t;
-      } else if (y - this.anchorY > cell * P.ROT_BACK) {
-        // 明确回拉才反向旋转，用于转过头时的微调
-        this.h.onRotate(-this.rotDir);
-        this.anchorY = y;
-        this.lastRotTime = t;
-      }
+      // 一次上滑只旋转一次：进入 ROTATE 时已 onRotate 一次并置 rotDone，
+      // 此后即使手指仍按在屏幕上、甚至继续上滑，也不再触发第二次旋转，
+      // 彻底避免「一滑多转」。想要再次旋转请抬手后重新上滑（或轻点/双击方块）。
       return;
     }
 
@@ -389,6 +402,13 @@
     if (this.mode === 'CHARGE' && this.charging) {
       this.charge = Math.min(1, this.charge + dt / P.CHARGE_MS);
     }
+    if (this.mode === 'SOFTDROP') {
+      this.softDropAcc += dt;
+      while (this.softDropAcc >= P.SOFTDROP_MS) {
+        this.softDropAcc -= P.SOFTDROP_MS;
+        if (this.h.onSoftDrop) this.h.onSoftDrop();
+      }
+    }
   };
 
   Gesture.prototype.handleUp = function (t) {
@@ -434,6 +454,7 @@
     this.mode = 'NONE';
     this.charging = false;
     this.charge = 0;
+    this.softDropAcc = 0;
   };
 
   Gesture.prototype.getState = function () {
